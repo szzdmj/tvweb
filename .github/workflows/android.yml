@@ -5,6 +5,15 @@ on:
     branches: [ "master", "main" ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      source_url:
+        description: 'Full URL of the homepage to fetch (default: https://szzdmj.github.io/index.html)'
+        required: false
+        default: 'https://szzdmj.github.io/index.html'
+      base_url:
+        description: 'Base URL to resolve relative assets (default: https://szzdmj.github.io/)'
+        required: false
+        default: 'https://szzdmj.github.io/'
 
 jobs:
   build:
@@ -30,8 +39,69 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
+      - name: Prepare assets and fetch homepage (latest)
+        env:
+          SOURCE_URL: ${{ github.event.inputs.source_url || github.event.inputs.source_url && github.event.inputs.source_url || 'https://szzdmj.github.io/index.html' }}
+          BASE_URL: ${{ github.event.inputs.base_url || github.event.inputs.base_url && github.event.inputs.base_url || 'https://szzdmj.github.io/' }}
+        run: |
+          set -euo pipefail
+          echo "SOURCE_URL=${SOURCE_URL}"
+          echo "BASE_URL=${BASE_URL}"
+          mkdir -p app/src/main/assets
+          # Fetch latest index.html from the given site URL
+          echo "Downloading index.html from ${SOURCE_URL}"
+          if ! curl -fsSL -o app/src/main/assets/index.html "${SOURCE_URL}"; then
+            echo "Failed to download ${SOURCE_URL}"
+            exit 1
+          fi
+          # Remove optional BOM if present
+          sed -i '1s/^\xEF\xBB\xBF//' app/src/main/assets/index.html || true
+          echo "Downloaded index.html size: $(wc -c < app/src/main/assets/index.html) bytes"
+
+          # Extract src/href values and try to fetch relative assets
+          echo "Scanning index.html for local relative resource references..."
+          # extract src/href tokens, strip surrounding quotes, ignore absolute http(s): and data:
+          grep -oE '(src|href)=["'"'"'][^"'"'"']+["'"'"']' app/src/main/assets/index.html \
+            | sed -E 's/^(src|href)=["'"'"']|["'"'"']$//g' \
+            | awk '{print $0}' \
+            | grep -vE '^(https?:|data:|mailto:|\/\/)' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | sort -u > /tmp/local_assets.txt || true
+
+          if [ -s /tmp/local_assets.txt ]; then
+            echo "Found relative asset paths:"
+            cat /tmp/local_assets.txt
+            while IFS= read -r asset; do
+              # Normalize leading ./ or /
+              path="${asset#./}"
+              path="${path#/}"
+              # Skip empty
+              if [ -z "${path}" ]; then
+                continue
+              fi
+              dest="app/src/main/assets/${path}"
+              mkdir -p "$(dirname "${dest}")"
+              url="${BASE_URL%/}/${path}"
+              echo "Fetching ${url} -> ${dest}"
+              # Try download; if fails, print warning but continue
+              if ! curl -fsSL -o "${dest}" "${url}"; then
+                echo "Warning: failed to download ${url}. You may need to add this asset manually."
+              fi
+            done < /tmp/local_assets.txt
+          else
+            echo "No local relative assets detected (or they were all absolute/data)."
+          fi
+
       - name: Build (assembleRelease)
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF8"
+
+      - name: Show APK sizes
+        run: |
+          echo "APK artifacts:"
+          ls -lh app/build/outputs/apk/release || true
+          du -h app/build/outputs/apk/release/*.apk || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
