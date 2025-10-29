@@ -2,7 +2,6 @@ apply plugin: 'com.android.application'
 
 android {
     compileSdkVersion 33
-    namespace "com.szzdmj.tvweb"
 
     defaultConfig {
         applicationId "com.szzdmj.tvweb"
@@ -10,6 +9,20 @@ android {
         targetSdkVersion 33
         versionCode 1
         versionName "1.0"
+
+        multiDexEnabled true
+    }
+
+    signingConfigs {
+        release {
+            // 本地测试可临时放一个 keystore；CI 请用 Secrets 注入
+            storeFile file(System.getenv("KEYSTORE_FILE") ?: "release.keystore")
+            storePassword System.getenv("KEYSTORE_PASSWORD") ?: "password"
+            keyAlias System.getenv("KEY_ALIAS") ?: "alias"
+            keyPassword System.getenv("KEY_PASSWORD") ?: "password"
+            v1SigningEnabled true   // 必须：支持 4.4.4
+            v2SigningEnabled true
+        }
     }
 
     buildTypes {
@@ -17,6 +30,7 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
         debug {
             minifyEnabled false
@@ -30,5 +44,7 @@ android {
 }
 
 dependencies {
-    // Keep dependencies empty to minimize APK size
+    implementation project(':flutter') // Flutter 子工程
+    implementation 'androidx.multidex:multidex:2.0.1'
+    // 其余依赖尽量保持精简，APK 体积会因 Flutter 引擎增大
 }
