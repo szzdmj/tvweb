@@ -39,58 +39,41 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Prepare assets and fetch homepage (latest)
+      - name: Prepare assets — download only index.html, webjs.js, sw.js (latest)
         env:
-          SOURCE_URL: ${{ github.event.inputs.source_url || github.event.inputs.source_url && github.event.inputs.source_url || 'https://szzdmj.github.io/index.html' }}
-          BASE_URL: ${{ github.event.inputs.base_url || github.event.inputs.base_url && github.event.inputs.base_url || 'https://szzdmj.github.io/' }}
+          SOURCE_URL: ${{ github.event.inputs.source_url || 'https://szzdmj.github.io/index.html' }}
+          BASE_URL: ${{ github.event.inputs.base_url || 'https://szzdmj.github.io/' }}
         run: |
           set -euo pipefail
           echo "SOURCE_URL=${SOURCE_URL}"
           echo "BASE_URL=${BASE_URL}"
           mkdir -p app/src/main/assets
-          # Fetch latest index.html from the given site URL
+
+          # download index.html (latest) without modification
           echo "Downloading index.html from ${SOURCE_URL}"
           if ! curl -fsSL -o app/src/main/assets/index.html "${SOURCE_URL}"; then
             echo "Failed to download ${SOURCE_URL}"
             exit 1
           fi
-          # Remove optional BOM if present
+
+          # remove BOM if present
           sed -i '1s/^\xEF\xBB\xBF//' app/src/main/assets/index.html || true
           echo "Downloaded index.html size: $(wc -c < app/src/main/assets/index.html) bytes"
 
-          # Extract src/href values and try to fetch relative assets
-          echo "Scanning index.html for local relative resource references..."
-          # extract src/href tokens, strip surrounding quotes, ignore absolute http(s): and data:
-          grep -oE '(src|href)=["'"'"'][^"'"'"']+["'"'"']' app/src/main/assets/index.html \
-            | sed -E 's/^(src|href)=["'"'"']|["'"'"']$//g' \
-            | awk '{print $0}' \
-            | grep -vE '^(https?:|data:|mailto:|\/\/)' \
-            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-            | sort -u > /tmp/local_assets.txt || true
+          # download webjs.js and sw.js from the same BASE_URL (latest) into assets
+          for f in webjs.js sw.js; do
+            url="${BASE_URL%/}/${f}"
+            dest="app/src/main/assets/${f}"
+            echo "Fetching ${url} -> ${dest}"
+            if curl -fsSL -o "${dest}" "${url}"; then
+              echo "Downloaded ${f} (size: $(wc -c < "${dest}") bytes)"
+            else
+              echo "Warning: failed to download ${url} — continuing (you may add this file manually)"
+            fi
+          done
 
-          if [ -s /tmp/local_assets.txt ]; then
-            echo "Found relative asset paths:"
-            cat /tmp/local_assets.txt
-            while IFS= read -r asset; do
-              # Normalize leading ./ or /
-              path="${asset#./}"
-              path="${path#/}"
-              # Skip empty
-              if [ -z "${path}" ]; then
-                continue
-              fi
-              dest="app/src/main/assets/${path}"
-              mkdir -p "$(dirname "${dest}")"
-              url="${BASE_URL%/}/${path}"
-              echo "Fetching ${url} -> ${dest}"
-              # Try download; if fails, print warning but continue
-              if ! curl -fsSL -o "${dest}" "${url}"; then
-                echo "Warning: failed to download ${url}. You may need to add this asset manually."
-              fi
-            done < /tmp/local_assets.txt
-          else
-            echo "No local relative assets detected (or they were all absolute/data)."
-          fi
+          echo "Files written to app/src/main/assets/:"
+          ls -l app/src/main/assets || true
 
       - name: Build (assembleRelease)
         run: ./gradlew assembleRelease --no-daemon
