@@ -1,2 +1,9 @@
 rootProject.name = "tvweb"
 include ':app'
+
+// Flutter module 相对路径
+def flutterModulePath = new File(rootDir, "flutter_webshell")
+
+// 注入 Flutter 子工程
+setBinding(new Binding([gradle: this, settings: settings]))
+evaluate(new File(flutterModulePath, ".android/include_flutter.groovy"))
