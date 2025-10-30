@@ -50,7 +50,7 @@ jobs:
           echo "Wrote flutter.sdk to $(pwd)/local.properties"
           tail -n +1 local.properties || true
 
-          # 2) 在 module 目录初始化为 Flutter Module（保留其 pubspec.yaml 以保住 module 标记），然后只恢复 lib/main.dart
+          # 2) 在 module 目录初始化为 Flutter Module（保留 module 标记），仅恢复 lib/main.dart
           cd flutter_webshell
           echo "Initializing flutter_webshell as Flutter module (force overwrite)..."
           flutter create --template=module --org com.szzdmj --project-name flutter_webshell --overwrite .
@@ -59,12 +59,12 @@ jobs:
           cd ..
           git checkout -- flutter_webshell/lib/main.dart
 
-          # 回到 module，添加插件依赖并拉取
+          # 回到 module，添加插件依赖并拉取（使用兼容格式）
           cd flutter_webshell
-          flutter pub add flutter_inappwebview@^5.7.2+3
+          flutter pub add flutter_inappwebview:^5.7.2+3
           flutter pub get
 
-          # 生成 .android/include_flutter.groovy（某些版本 pub get 不会生成，用 build aar 触发）
+          # 生成 .android/include_flutter.groovy（确保 settings.gradle 能 evaluate）
           flutter build aar
 
           # 双保险：在 module 目录也写入 flutter.sdk
