@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>WebView 调试版 index.html（节点/脚本加载诊断）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans CJK", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 8px; }
+    h3 { margin: 6px 0; }
+    #log { border: 1px solid #ccc; padding: 8px; height: 42vh; overflow: auto; background:#f9f9f9; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+    .INFO { color: #333; }
+    .WARN { color: #b76e00; }
+    .ERROR{ color: #b00020; }
+    .row { margin: 6px 0; }
+    input[type="text"] { width: 96%; padding: 6px; font-size: 14px; }
+    button { padding: 6px 10px; font-size: 14px; }
+    #demoArea { border:1px dashed #ddd; padding:8px; margin-top:8px; }
+    #top12 { margin-top:6px; padding:6px; background:#eef; border:1px solid #cde; }
+  </style>
+
+  <!-- 轻量日志器（先加载，保证最早捕获） -->
+  <script>
+  (function(){
+    var start = Date.now();
+    function ts(){ return '[' + (Date.now()-start) + 'ms] '; }
+    function append(level, msg){
+      var pre = document.getElementById('log');
+      var line = ts() + level + ': ' + msg;
+      try {
+        var div = document.createElement('div');
+        div.className = level;
+        div.textContent = line;
+        pre.appendChild(div);
+        pre.scrollTop = pre.scrollHeight;
+      } catch(e) {}
+    }
+    window.L = {
+      info: function(m){ append('INFO', m); },
+      warn: function(m){ append('WARN', m); },
+      error:function(m){ append('ERROR',m); }
+    };
+  })();
+  </script>
+
+  <!-- 捕获脚本错误与资源加载失败 -->
+  <script>
+  window.addEventListener('error', function(e){
+    try{
+      if (e && e.target && e.target.tagName === 'SCRIPT') {
+        L.error('Script load failed: ' + (e.target.src || '(inline)'));
+      } else {
+        var where = (e.filename||'') + (e.lineno? (':'+e.lineno):'') + (e.colno? (':'+e.colno):'');
+        L.error('Unhandled error: ' + (e.message||e) + (where? (' @ '+where):''));
+      }
+    }catch(_) {}
+  }, true);
+  </script>
+
+</head>
+<body>
+  <h3>WebView/浏览器 运行环境诊断</h3>
+  <div id="log" aria-label="日志输出"></div>
+
+  <div class="row">
+    <button onclick="runEnvChecks()">运行环境检查</button>
+    <button onclick="runPreShimChecks()">预检查（shim 前）</button>
+    <button onclick="installShim()">安装 ID 暴露 shim</button>
+    <button onclick="runPostShimChecks()">复查（shim 后）</button>
+    <button onclick="tryLoadWebjs()">尝试加载 webjs.js</button>
+  </div>
+
+  <div class="row">
+    <label>自定义要检测的 ID（逗号分隔）：</label><br>
+    <input id="ids" type="text" value="top12,divDDMXS,d0,inMainleft1,toptu">
+    <button onclick="checkIds()">检测这些 ID</button>
+  </div>
+
+  <div id="demoArea">
+    <b>页面内置示例节点（用于最小化复现）：</b>
+    <div id="top12">示例：id="top12" 的节点（调试页自带）</div>
+    <div id="divDDMXS" style="display:none">示例：id="divDDMXS"</div>
+    <div id="d0" style="display:none">示例：id="d0"</div>
+  </div>
+
+  <script>
+    // 运行环境检查（UA/协议/特性）
+    function runEnvChecks(){
+      L.info('UserAgent: ' + navigator.userAgent);
+      L.info('Location: '  + location.href);
+      L.info('Protocol: '  + location.protocol + ' （file:// 在 4.4 下不支持 SW）');
+      var feats = [
+        ['serviceWorker', (typeof navigator !== 'undefined' && 'serviceWorker' in navigator)],
+        ['fetch',         ('fetch'   in window)],
+        ['Promise',       ('Promise' in window)],
+        ['MutationObserver', ('MutationObserver' in window)],
+        ['CSS.supports',  ('CSS' in window && 'supports' in CSS)]
+      ];
+      for (var i=0;i<feats.length;i++){
+        L.info('Feature ' + feats[i][0] + ': ' + feats[i][1]);
+      }
+    }
+
+    // 在安装 shim 之前，尝试以“id 当全局变量”的方式访问
+    function runPreShimChecks(){
+      try{ top12.style.border = '1px solid #0c0'; L.info('Pre-shim: top12 变量可用'); }
+      catch(e){ L.warn('Pre-shim: top12 变量不可用（undefined） => ' + e); }
+      try{ d0.style.display = 'block'; L.info('Pre-shim: d0 变量可用'); }
+      catch(e){ L.warn('Pre-shim: d0 变量不可用（undefined） => ' + e); }
+    }
+
+    // 安装把所有 id 显式挂到 window 的 shim（方案 A 的核心）
+    var __shimInstalled = false;
+    function installShim(){
+      if (__shimInstalled){ L.info('shim 已安装'); return; }
+      (function exposeIdsToWindow(){
+        function expose(el){
+          var id = el && el.id;
+          if (id && !(id in window)) window[id] = el;
+        }
+        try {
+          var els = document.querySelectorAll('[id]');
+          for (var i=0;i<els.length;i++) expose(els[i]);
+          try{
+            new MutationObserver(function(muts){
+              for (var k=0;k<muts.length;k++){
+                var nodes = muts[k].addedNodes || [];
+                for (var j=0;j<nodes.length;j++){
+                  var n = nodes[j];
+                  if (n.nodeType === 1){
+                    expose(n);
+                    if (n.querySelectorAll){
+                      var all = n.querySelectorAll('[id]');
+                      for (var i2=0;i2<all.length;i2++) expose(all[i2]);
+                    }
+                  }
+                }
+              }
+            }).observe(document.documentElement, {subtree:true, childList:true});
+          }catch(_) {}
+          __shimInstalled = true;
+          L.info('shim 安装完成。window.top12 类型：' + (typeof window.top12));
+        } catch(e){
+          L.error('安装 shim 失败：' + e);
+        }
+      })();
+    }
+
+    // 安装 shim 后再次尝试
+    function runPostShimChecks(){
+      try{ top12.style.backgroundColor = '#efe'; L.info('Post-shim: top12 变量可用'); }
+      catch(e){ L.error('Post-shim: top12 变量仍不可用 => ' + e); }
+      try{ d0.style.display = 'block'; L.info('Post-shim: d0 变量可用'); }
+      catch(e){ L.error('Post-shim: d0 变量仍不可用 => ' + e); }
+    }
+
+    // 批量检查一组 id：比较 window[id] 与 document.getElementById(id)
+    function checkIds(){
+      var raw = document.getElementById('ids').value || '';
+      var arr = raw.split(/\s*,\s*/);
+      for (var i=0;i<arr.length;i++){
+        var id = arr[i];
+        if (!id) continue;
+        var byVar = window[id];
+        var byGet = document.getElementById(id);
+        L.info('ID "'+id+'": window.'+id+' = ' + (byVar ? 'OK' : 'undefined')
+               + ', getElementById = ' + (byGet ? 'OK' : 'null'));
+      }
+      // 动态新增一个节点，验证 MutationObserver 是否把它挂到 window
+      var late = document.createElement('div'); late.id = 'lateNode'; late.textContent = '动态新增: lateNode';
+      document.body.appendChild(late);
+      L.info('已新增 id="lateNode"。window.lateNode 类型：' + (typeof window.lateNode));
+    }
+
+    // 尝试加载同目录的 webjs.js（若不存在将直接报错，便于确认“是否正确引入”）
+    function tryLoadWebjs(){
+      var s = document.createElement('script');
+      s.src = 'webjs.js';
+      s.onload = function(){
+        L.info('webjs.js 加载成功');
+        L.info('window.loadWeb 类型：' + (typeof window.loadWeb));
+        L.info('（诊断页不会主动调用 loadWeb，仅报告其存在性）');
+      };
+      s.onerror = function(){
+        L.error('webjs.js NOT found 或加载失败（路径/文件缺失）。若你的正式页依赖此脚本，需确保同目录存在且文件名正确。');
+      };
+      document.head.appendChild(s);
+    }
+
+    // 首屏建议：自动跑一次环境检查 + 预检查
+    runEnvChecks();
+    runPreShimChecks();
+  </script>
+
+  <hr>
+  <div class="row">
+    <b>提示：</b>
+    <ul>
+      <li>若日志显示 “webjs.js NOT found”，说明确实没有正确引入脚本（与“找不到节点”的常见成因吻合）。</li>
+      <li>若 “Pre‑shim 不可用” 而 “Post‑shim 可用”，请在你的正式 index.html 里按我们之前的“方案 A”把 shim 放在任何使用这些 id 变量之前。</li>
+      <li>Android 4.4.4 WebView 不支持 Service Worker，且 file:// 协议也不能注册 SW；请在正式页对 SW 注册加上 https/http 与特性判断。</li>
+      <li>若还有报错，请把 LOG 前几十行截图发我，我继续给出精准修复建议。</li>
+    </ul>
+  </div>
+</body>
+</html>
