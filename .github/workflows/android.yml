@@ -32,7 +32,6 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 如需兼容 API19，请选择仍支持 19 的稳定版本；先用这个验证
           flutter-version: '3.10.6'
           channel: 'stable'
 
@@ -46,16 +45,19 @@ jobs:
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
 
-          # 1) 在项目根写入 local.properties（include_flutter.groovy 会读取这里的 flutter.sdk）
+          # 1) 在项目根写入 local.properties（include_flutter.groovy 读取这里）
           echo "flutter.sdk=${FLUTTER_SDK}" >> local.properties
           echo "Wrote flutter.sdk to $(pwd)/local.properties"
           tail -n +1 local.properties || true
 
-          # 2) 在 module 内执行 pub get 以生成 .android/include_flutter.groovy
+          # 2) 在 module 内执行 pub get + build aar，生成 .android/include_flutter.groovy
           cd flutter_webshell
           flutter pub get
+          flutter build aar
           # 可选：也在 module 目录写一份 local.properties（双保险）
           echo "flutter.sdk=${FLUTTER_SDK}" >> local.properties
+
+          # 3) 确认 .android 生成成功
           ls -la .android || (echo ".android not generated" && exit 1)
           test -f .android/include_flutter.groovy || (echo "include_flutter.groovy missing" && exit 1)
           cd ..
