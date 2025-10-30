@@ -8,7 +8,7 @@ def includeScript = new File(flutterModulePath, ".android/include_flutter.groovy
 println "==[settings.gradle] flutterModulePath: ${flutterModulePath.absolutePath}"
 println "==[settings.gradle] include script: ${includeScript.absolutePath} exists=${includeScript.exists()}"
 
-// 打印 root local.properties 与 module .android/local.properties（便于定位 flutter.sdk）
+// 打印 root local.properties 与 module .android/local.properties（定位 flutter.sdk）
 def rootLocal = new File(rootDir, "local.properties")
 println "==[settings.gradle] root local.properties exists=${rootLocal.exists()}"
 if (rootLocal.exists()) {
