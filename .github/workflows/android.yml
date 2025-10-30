@@ -125,23 +125,33 @@ jobs:
           echo "==== Gradle projects (expect :app and :flutter) ===="
           ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" projects --stacktrace --info --no-daemon || true
 
-      - name: Prepare assets — download only index.html, webjs.js, sw.js (latest)
+      - name: Prepare assets — use local index.html; download webjs.js and sw.js (latest)
         env:
-          SOURCE_URL: ${{ github.event.inputs.source_url || 'https://szzdmj.github.io/index.html' }}
           BASE_URL: ${{ github.event.inputs.base_url || 'https://szzdmj.github.io/' }}
         run: |
           set -euo pipefail
           mkdir -p app/src/main/assets
-          echo "Downloading index.html from ${SOURCE_URL}"
-          curl -fsSL -o app/src/main/assets/index.html "${SOURCE_URL}"
+
+          # 使用仓库内置的 index.html（不再远程下载）
+          if [ ! -f app/src/main/assets/index.html ]; then
+            echo "ERROR: app/src/main/assets/index.html not found in repo. Please add it and rerun."
+            ls -l app/src/main/assets || true
+            exit 1
+          fi
+          # 可选：去除 BOM（若存在）
           sed -i '1s/^\xEF\xBB\xBF//' app/src/main/assets/index.html || true
+          echo "Using local index.html (first lines):"
+          sed -n '1,20p' app/src/main/assets/index.html || true
+
+          # 仍然远程获取 webjs.js 与 sw.js
           for f in webjs.js sw.js; do
             url="${BASE_URL%/}/${f}"
             dest="app/src/main/assets/${f}"
             echo "Fetching ${url} -> ${dest}"
             curl -fsSL -o "${dest}" "${url}"
           done
-          echo "Assets:"
+
+          echo "Assets present:"
           ls -l app/src/main/assets
 
       - name: Build Debug (assembleDebug) for quick install test
