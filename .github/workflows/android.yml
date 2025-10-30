@@ -44,39 +44,33 @@ jobs:
           # 推导 Flutter SDK 根目录（.../bin/flutter 的上一级）
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
-
-          # 将 FLUTTER_SDK 暴露给后续 steps
           echo "FLUTTER_SDK=${FLUTTER_SDK}" >> "$GITHUB_ENV"
 
-          # 1) 根目录写入 local.properties（include_flutter.groovy 会读取这里）
+          # 根 local.properties（供 include_flutter.groovy 读取）
           printf "flutter.sdk=%s\n" "${FLUTTER_SDK}" >> local.properties
-          echo "Root local.properties:"
+          echo "==== root local.properties ===="
           cat local.properties || true
 
-          # 2) 初始化 module（保留 module 标记），仅恢复 lib/main.dart；添加依赖并生成 .android
+          # 初始化为 Flutter module（保留 module 标记），仅恢复 lib/main.dart
           cd flutter_webshell
-          echo "Initializing flutter_webshell as Flutter module (force overwrite)..."
           flutter create --template=module --org com.szzdmj --project-name flutter_webshell --overwrite .
-
           cd ..
-          # 恢复你仓库中的 lib/main.dart（不要覆盖 pubspec.yaml！）
           git checkout -- flutter_webshell/lib/main.dart
 
+          # 添加依赖并生成 .android/include_flutter.groovy
           cd flutter_webshell
-          # 安装插件依赖
           flutter pub add flutter_inappwebview:^5.8.0
           flutter pub get
-          # 生成 .android/include_flutter.groovy
           flutter build aar
 
-          # 3) 在 module 的 .android 下也写入 local.properties（Flutter 子工程会读取这里）
+          # module 的 .android/local.properties（供子工程直接读取）
           printf "flutter.sdk=%s\n" "${FLUTTER_SDK}" >> .android/local.properties
-          echo "Module .android/local.properties:"
+          echo "==== module .android/local.properties ===="
           cat .android/local.properties || true
 
-          # 4) 确认 .android 与 include_flutter.groovy 存在
-          ls -la .android || (echo ".android not generated" && exit 1)
-          test -f .android/include_flutter.groovy || (echo "include_flutter.groovy missing" && exit 1)
+          # 校验生成
+          ls -la .android
+          head -n 80 .android/include_flutter.groovy || true
           cd ..
 
       - name: Cache Gradle
@@ -88,6 +82,18 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
+
+      - name: Print settings and sanity checks
+        shell: bash
+        run: |
+          echo "==== settings.gradle ===="
+          sed -n '1,200p' settings.gradle || true
+
+          echo "==== root local.properties (before build) ===="
+          cat local.properties || true
+
+          echo "==== Gradle projects (expect :app and :flutter) ===="
+          ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" projects --no-daemon || true
 
       - name: Prepare assets — download only index.html, webjs.js, sw.js (latest)
         env:
@@ -108,12 +114,20 @@ jobs:
           echo "Assets:"
           ls -l app/src/main/assets
 
-      - name: Build (assembleRelease)
-        shell: bash
+      - name: Build Debug (assembleDebug) for quick install test
+        run: ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" assembleDebug --stacktrace --info --no-daemon
+        env:
+          JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF8"
+
+      - name: Upload debug APK
         run: |
-          set -euo pipefail
-          # 双保险：以 -Pflutter.sdk 传入
-          ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" assembleRelease --no-daemon
+          mkdir -p artifacts
+          cp app/build/outputs/apk/debug/*.apk artifacts/debug.apk || true
+          ls -lh artifacts || true
+        if: always()
+
+      - name: Build Release (assembleRelease)
+        run: ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" assembleRelease --stacktrace --info --no-daemon
         env:
           JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF8"
 
