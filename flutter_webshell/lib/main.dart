@@ -30,28 +30,45 @@ class WebShellPage extends StatefulWidget {
 
 class _WebShellPageState extends State<WebShellPage> {
   InAppWebViewController? _controller;
-  final String _initial = 'file:///android_asset/index.html'; // 仍然从原生 assets 加载
+  final String _initial = 'file:///android_asset/index.html'; // 仍从原生 assets 加载
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: InAppWebView(
-          initialUrlRequest: URLRequest(url: WebUri(_initial)),
-          initialSettings: InAppWebViewSettings(
-            javaScriptEnabled: true,
-            mediaPlaybackRequiresUserGesture: false,
-            mixedContentMode: MixedContentMode.COMPATIBILITY_MODE,
-            useOnDownloadStart: true,
-            useShouldOverrideUrlLoading: true,
+          // 5.x 用 Uri.parse，而不是 WebUri
+          initialUrlRequest: URLRequest(url: Uri.parse(_initial)),
+          // 5.x 用 initialOptions + InAppWebViewGroupOptions
+          initialOptions: InAppWebViewGroupOptions(
+            crossPlatform: InAppWebViewOptions(
+              javaScriptEnabled: true,
+              mediaPlaybackRequiresUserGesture: false,
+            ),
+            android: AndroidInAppWebViewOptions(
+              // 允许混合内容（根据你的页面需要）
+              mixedContentMode:
+                  AndroidMixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
+              useShouldOverrideUrlLoading: true,
+              useOnDownloadStart: true,
+              useHybridComposition: true,
+            ),
+            ios: IOSInAppWebViewOptions(
+              allowsInlineMediaPlayback: true,
+            ),
           ),
           onWebViewCreated: (controller) {
             _controller = controller;
+            // JS handler 示例（按需扩展）
             controller.addJavaScriptHandler(
               handlerName: 'getPlaylists',
               callback: (args) {
                 return [
-                  {'title': '示例 1', 'url': 'https://example.com/video1.mp4', 'type': 'mp4'}
+                  {
+                    'title': '示例 1',
+                    'url': 'https://example.com/video1.mp4',
+                    'type': 'mp4'
+                  }
                 ];
               },
             );
@@ -61,6 +78,7 @@ class _WebShellPageState extends State<WebShellPage> {
             // print('[WebView] ${message.message}');
           },
           shouldOverrideUrlLoading: (controller, action) async {
+            // 按需拦截或放行
             return NavigationActionPolicy.ALLOW;
           },
         ),
