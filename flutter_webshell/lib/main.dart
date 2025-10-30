@@ -37,19 +37,19 @@ class _WebShellPageState extends State<WebShellPage> {
     return Scaffold(
       body: SafeArea(
         child: InAppWebView(
-          // 5.x 用 Uri.parse，而不是 WebUri
+          // 5.x: 使用 Uri.parse
           initialUrlRequest: URLRequest(url: Uri.parse(_initial)),
-          // 5.x 用 initialOptions + InAppWebViewGroupOptions
+          // 5.x: 使用 initialOptions + InAppWebViewGroupOptions
           initialOptions: InAppWebViewGroupOptions(
             crossPlatform: InAppWebViewOptions(
               javaScriptEnabled: true,
               mediaPlaybackRequiresUserGesture: false,
             ),
             android: AndroidInAppWebViewOptions(
-              // 允许混合内容（根据你的页面需要）
+              // 允许混合内容（根据页面需要）
               mixedContentMode:
                   AndroidMixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
-              useShouldOverrideUrlLoading: true,
+              // useShouldOverrideUrlLoading 在 5.8.0 中已移除/不再需要，删除即可
               useOnDownloadStart: true,
               useHybridComposition: true,
             ),
