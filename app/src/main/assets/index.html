@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>WebView 调试版 index.html（节点/脚本加载诊断）</title>
+  <title>WebView 调试版 index.html（节点/脚本加载诊断+变量值/链接）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans CJK", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 8px; }
@@ -16,9 +16,11 @@
     button { padding: 6px 10px; font-size: 14px; }
     #demoArea { border:1px dashed #ddd; padding:8px; margin-top:8px; }
     #top12 { margin-top:6px; padding:6px; background:#eef; border:1px solid #cde; }
+    #linkArea { padding:6px; border:1px dashed #ddd; margin-top:6px; }
+    .pill { display:inline-block; margin:2px 4px; padding:2px 6px; border-radius:10px; background:#eef; border:1px solid #cde; font-size:12px; }
   </style>
 
-  <!-- 轻量日志器（先加载，保证最早捕获） -->
+  <!-- 轻量日志器 -->
   <script>
   (function(){
     var start = Date.now();
@@ -55,7 +57,6 @@
     }catch(_) {}
   }, true);
   </script>
-
 </head>
 <body>
   <h3>WebView/浏览器 运行环境诊断</h3>
@@ -75,6 +76,14 @@
     <button onclick="checkIds()">检测这些 ID</button>
   </div>
 
+  <div class="row">
+    <b>变量工具：</b><br>
+    <input id="varName" type="text" value="lateNode" placeholder="输入变量名，例如 lateNode">
+    <button onclick="showVar()">显示变量值</button>
+    <button onclick="makeLink()">生成链接（形如 变量/0）</button>
+    <div id="linkArea"></div>
+  </div>
+
   <div id="demoArea">
     <b>页面内置示例节点（用于最小化复现）：</b>
     <div id="top12">示例：id="top12" 的节点（调试页自带）</div>
@@ -83,11 +92,24 @@
   </div>
 
   <script>
-    // 运行环境检查（UA/协议/特性）
+    // 小工具：生成节点摘要字符串
+    function summarizeNode(n){
+      if (!n) return '(null/undefined)';
+      try{
+        var txt = (n.textContent||'').replace(/\s+/g,' ').slice(0,60);
+        return [
+          'id="'+(n.id||'')+'"',
+          'tag='+ (n.tagName||''),
+          (n.className? ('class="'+n.className+'"') : ''),
+          'text="'+txt+'"'
+        ].filter(Boolean).join(', ');
+      }catch(e){ return '[uninspectable node: '+e+']'; }
+    }
+
     function runEnvChecks(){
       L.info('UserAgent: ' + navigator.userAgent);
       L.info('Location: '  + location.href);
-      L.info('Protocol: '  + location.protocol + ' （file:// 在 4.4 下不支持 SW）');
+      L.info('Protocol: '  + location.protocol + '（file:// 在 4.4 下不支持 SW）');
       var feats = [
         ['serviceWorker', (typeof navigator !== 'undefined' && 'serviceWorker' in navigator)],
         ['fetch',         ('fetch'   in window)],
@@ -100,7 +122,6 @@
       }
     }
 
-    // 在安装 shim 之前，尝试以“id 当全局变量”的方式访问
     function runPreShimChecks(){
       try{ top12.style.border = '1px solid #0c0'; L.info('Pre-shim: top12 变量可用'); }
       catch(e){ L.warn('Pre-shim: top12 变量不可用（undefined） => ' + e); }
@@ -145,7 +166,6 @@
       })();
     }
 
-    // 安装 shim 后再次尝试
     function runPostShimChecks(){
       try{ top12.style.backgroundColor = '#efe'; L.info('Post-shim: top12 变量可用'); }
       catch(e){ L.error('Post-shim: top12 变量仍不可用 => ' + e); }
@@ -168,7 +188,51 @@
       // 动态新增一个节点，验证 MutationObserver 是否把它挂到 window
       var late = document.createElement('div'); late.id = 'lateNode'; late.textContent = '动态新增: lateNode';
       document.body.appendChild(late);
+      // 这里输出 lateNode 的“值摘要”
       L.info('已新增 id="lateNode"。window.lateNode 类型：' + (typeof window.lateNode));
+      L.info('lateNode 值: ' + summarizeNode(window.lateNode));
+
+      // 同时生成并显示一个“组成的链接”示例：lateNode/0
+      addComposedLink('lateNode', 0);
+    }
+
+    // 变量工具：显示变量值
+    function showVar(){
+      var name = (document.getElementById('varName').value || '').trim();
+      if (!name) { L.warn('变量工具：请输入变量名'); return; }
+      var v = window[name];
+      if (!v) { L.warn('变量工具：window.'+name+' 不存在/未定义'); return; }
+      L.info('window.'+name+' 类型：' + (typeof v));
+      if (typeof v === 'object') {
+        L.info(name+' 值: ' + summarizeNode(v));
+      } else {
+        try { L.info(name+' 值（非节点）：' + String(v)); }
+        catch(e){ L.info(name+' 值（不可转字符串）'); }
+      }
+    }
+
+    // 变量工具：生成链接 “变量/0”
+    function makeLink(){
+      var name = (document.getElementById('varName').value || '').trim();
+      if (!name) { L.warn('变量工具：请输入变量名'); return; }
+      addComposedLink(name, 0);
+    }
+
+    // 在面板中添加由“名称/索引”组成的可点击链接（使用哈希，避免 file:// 真跳转）
+    function addComposedLink(name, idx){
+      var area = document.getElementById('linkArea');
+      var a = document.createElement('a');
+      var linkText = name + '/' + idx;
+      a.textContent = linkText;
+      a.href = '#' + linkText;
+      a.className = 'pill';
+      a.onclick = function(ev){
+        ev.preventDefault();
+        L.info('已点击链接：' + linkText + '（哈希跳转，未离开当前页）');
+        location.hash = linkText;
+      };
+      area.appendChild(a);
+      L.info('生成链接：' + linkText);
     }
 
     // 尝试加载同目录的 webjs.js（若不存在将直接报错，便于确认“是否正确引入”）
@@ -186,20 +250,9 @@
       document.head.appendChild(s);
     }
 
-    // 首屏建议：自动跑一次环境检查 + 预检查
+    // 首屏：自动跑一次环境检查 + 预检查
     runEnvChecks();
     runPreShimChecks();
   </script>
-
-  <hr>
-  <div class="row">
-    <b>提示：</b>
-    <ul>
-      <li>若日志显示 “webjs.js NOT found”，说明确实没有正确引入脚本（与“找不到节点”的常见成因吻合）。</li>
-      <li>若 “Pre‑shim 不可用” 而 “Post‑shim 可用”，请在你的正式 index.html 里按我们之前的“方案 A”把 shim 放在任何使用这些 id 变量之前。</li>
-      <li>Android 4.4.4 WebView 不支持 Service Worker，且 file:// 协议也不能注册 SW；请在正式页对 SW 注册加上 https/http 与特性判断。</li>
-      <li>若还有报错，请把 LOG 前几十行截图发我，我继续给出精准修复建议。</li>
-    </ul>
-  </div>
 </body>
 </html>
