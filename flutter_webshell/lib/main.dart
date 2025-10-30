@@ -30,79 +30,115 @@ class WebShellPage extends StatefulWidget {
 
 class _WebShellPageState extends State<WebShellPage> {
   InAppWebViewController? _controller;
-  final String _initial = 'file:///android_asset/index.html'; // 仍从原生 assets 加载
+  final String _initial = 'file:///android_asset/index.html';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: InAppWebView(
-          // 5.x: 使用 Uri.parse
           initialUrlRequest: URLRequest(url: Uri.parse(_initial)),
-          // 5.x: 使用 initialOptions + InAppWebViewGroupOptions
           initialOptions: InAppWebViewGroupOptions(
             crossPlatform: InAppWebViewOptions(
               javaScriptEnabled: true,
-              javaScriptCanOpenWindowsAutomatically: true, // 允许 window.open/target=_blank
+              javaScriptCanOpenWindowsAutomatically: true, // 允许 window.open / target=_blank
               mediaPlaybackRequiresUserGesture: false,
             ),
             android: AndroidInAppWebViewOptions(
               mixedContentMode:
                   AndroidMixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
               useHybridComposition: true,
-              supportMultipleWindows: true, // 允许多窗口（我们会在 onCreateWindow 中转到同 WebView）
-              allowFileAccessFromFileURLs: true, // 兼容 file:// 下的 XHR/资源请求
-              allowUniversalAccessFromFileURLs: true,
+              supportMultipleWindows: true, // 需要配合 onCreateWindow
             ),
             ios: IOSInAppWebViewOptions(
               allowsInlineMediaPlayback: true,
             ),
           ),
-          onWebViewCreated: (controller) {
+
+          onWebViewCreated: (controller) async {
             _controller = controller;
-            // 可按需添加更多 JS handler
-            controller.addJavaScriptHandler(
-              handlerName: 'getPlaylists',
-              callback: (args) {
-                return [
-                  {
-                    'title': '示例 1',
-                    'url': 'https://example.com/video1.mp4',
-                    'type': 'mp4'
-                  }
-                ];
-              },
-            );
-          },
-          onConsoleMessage: (controller, message) {
-            // 调试输出：adb logcat 可见
-            // print('[WebView] ${message.message}');
+            // 可根据需要添加 JS-bridge
           },
 
-          // 关键点：拦截 target=_blank / window.open
+          // 关键：处理 target=_blank 和 window.open
           onCreateWindow: (controller, createWindowRequest) async {
             final uri = createWindowRequest.request.url;
-            if (uri != null) {
-              // 在当前 WebView 直接加载新 URL，避免“打开新窗口失败然后回到主页”的现象
+            if (uri != null && uri.toString().isNotEmpty && uri.toString() != 'about:blank') {
               await controller.loadUrl(urlRequest: URLRequest(url: uri));
+              return true; // 我们已处理
             }
-            // 返回 true 表示我们己处理新窗口请求
-            return true;
+
+            // 常见模式：about:blank -> 新窗口里再赋值 URL
+            // 这里注入一个钩子，把新窗口的后续导航重定向到当前窗口
+            // 对部分站点有效，作为降级兜底。
+            try {
+              await controller.evaluateJavascript(source: """
+                (function(){
+                  try {
+                    // 覆盖 window.open，让其在当前窗口跳转
+                    window.open = function(u){ if(u){ location.href = u; } };
+                    // 把所有 a[target=_blank] 改为 _self
+                    document.querySelectorAll('a[target="_blank"]').forEach(function(a){
+                      a.setAttribute('target','_self');
+                    });
+                  }catch(e){}
+                })();
+              """);
+            } catch (e) {
+              // 忽略注入失败
+            }
+            return false; // 交还默认流程（已注入降级 JS）
           },
 
+          // 统一约束导航，防止“无效链接/相对路径”把页面带回首页
           shouldOverrideUrlLoading: (controller, action) async {
             final uri = action.request.url;
-            // 这里可按需拦截外部 scheme（intent:, market: 等），当前统一放行 http/https/file
-            // 若要拦截外链到系统浏览器，可在此判断并返回 CANCEL
-            return NavigationActionPolicy.ALLOW;
+            if (uri == null) return NavigationActionPolicy.ALLOW;
+
+            final urlStr = uri.toString();
+
+            // 允许的协议
+            if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'file') {
+              return NavigationActionPolicy.ALLOW;
+            }
+
+            // 锚点或空链接：留在当前页
+            if (urlStr.startsWith('#') || urlStr.isEmpty) {
+              return NavigationActionPolicy.CANCEL;
+            }
+
+            // 明显的“相对路径”（没有 scheme），避免导航到 file:///android_asset/xxx 造成“回主页/404”
+            if ((uri.scheme.isEmpty || uri.scheme == '') && !urlStr.startsWith('about:')) {
+              // 可以在这里加日志/JS 提示
+              return NavigationActionPolicy.CANCEL;
+            }
+
+            // 其它自定义 scheme（tel:, mailto:, intent: 等），如需外部处理可在此分流；
+            // 当前一律取消，避免异常回退到首页。
+            return NavigationActionPolicy.CANCEL;
           },
 
-          // 可选增强：记录错误，便于排查
+          onLoadStop: (controller, url) async {
+            // 再注入一次降级逻辑，确保 window.open/_blank 在所有页面都按“当前页打开”
+            try {
+              await controller.evaluateJavascript(source: """
+                (function(){
+                  try {
+                    window.open = function(u){ if(u){ location.href = u; } };
+                    document.querySelectorAll('a[target="_blank"]').forEach(function(a){
+                      a.setAttribute('target','_self');
+                    });
+                  }catch(e){}
+                })();
+              """);
+            } catch (_) {}
+          },
+
           onLoadError: (controller, url, code, message) async {
-            // print('onLoadError: $url [$code] $message');
+            // 可加日志/上报
           },
           onLoadHttpError: (controller, url, statusCode, description) async {
-            // print('onLoadHttpError: $url [$statusCode] $description');
+            // 可加日志/上报
           },
         ),
       ),
