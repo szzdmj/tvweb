@@ -185,3 +185,23 @@ jobs:
         with:
           name: szmjtvwebapp
           path: artifacts/szmjtvwebapp.apk
+      - name: Download latest szmjtvwebapp.apk from szzdmj/tvweb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tvweb/external
+          # 列出 artifacts，按创建时间降序选出第一个名为 szmjtvwebapp 的
+          artifact_id="$(gh api -H 'Accept: application/vnd.github+json' \
+            /repos/szzdmj/tvweb/actions/artifacts --paginate \
+            -q '.artifacts | sort_by(.created_at) | reverse | .[] | select(.name=="szmjtvwebapp") | .id' \
+            | head -n1)"
+          if [ -z "${artifact_id}" ]; then
+            echo "ERROR: no artifact named szmjtvwebapp found in szzdmj/tvweb"; exit 1;
+          fi
+          echo "Downloading artifact id=${artifact_id} ..."
+          gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/szzdmj/tvweb/actions/artifacts/${artifact_id}/zip" > /tmp/szmjtvwebapp.zip
+          unzip -o /tmp/szmjtvwebapp.zip -d tvweb/external
+          ls -l tvweb/external
