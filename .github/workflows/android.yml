@@ -32,7 +32,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 请选择你实际安装并验证过的 Flutter 版本（若需兼容 API19，请锁定仍支持 19 的版本）
+          # 如需兼容 API19，请选择仍支持 19 的稳定版本
           flutter-version: '3.10.6'
           channel: 'stable'
 
@@ -42,7 +42,6 @@ jobs:
           cd flutter_webshell
           flutter pub get
           cd ..
-          # 将 flutter.sdk 写入 gradle.properties（覆盖/追加均可）
           echo "flutter.sdk=${FLUTTER_HOME}" >> gradle.properties
           tail -n 5 gradle.properties
 
