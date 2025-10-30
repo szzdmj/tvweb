@@ -15,7 +15,6 @@ android {
 
     signingConfigs {
         release {
-            // 本地测试可临时放一个 keystore；CI 请用 Secrets 注入
             storeFile file(System.getenv("KEYSTORE_FILE") ?: "release.keystore")
             storePassword System.getenv("KEYSTORE_PASSWORD") ?: "password"
             keyAlias System.getenv("KEY_ALIAS") ?: "alias"
@@ -46,5 +45,4 @@ android {
 dependencies {
     implementation project(':flutter') // Flutter 子工程
     implementation 'androidx.multidex:multidex:2.0.1'
-    // 其余依赖尽量保持精简，APK 体积会因 Flutter 引擎增大
 }
