@@ -43,14 +43,16 @@ class _WebShellPageState extends State<WebShellPage> {
           initialOptions: InAppWebViewGroupOptions(
             crossPlatform: InAppWebViewOptions(
               javaScriptEnabled: true,
+              javaScriptCanOpenWindowsAutomatically: true, // 允许 window.open/target=_blank
               mediaPlaybackRequiresUserGesture: false,
             ),
             android: AndroidInAppWebViewOptions(
-              // 允许混合内容（根据页面需要）
               mixedContentMode:
                   AndroidMixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
-              // 注意：5.8.0 已移除了 useShouldOverrideUrlLoading 与 useOnDownloadStart
               useHybridComposition: true,
+              supportMultipleWindows: true, // 允许多窗口（我们会在 onCreateWindow 中转到同 WebView）
+              allowFileAccessFromFileURLs: true, // 兼容 file:// 下的 XHR/资源请求
+              allowUniversalAccessFromFileURLs: true,
             ),
             ios: IOSInAppWebViewOptions(
               allowsInlineMediaPlayback: true,
@@ -58,7 +60,7 @@ class _WebShellPageState extends State<WebShellPage> {
           ),
           onWebViewCreated: (controller) {
             _controller = controller;
-            // JS handler 示例（按需扩展）
+            // 可按需添加更多 JS handler
             controller.addJavaScriptHandler(
               handlerName: 'getPlaylists',
               callback: (args) {
@@ -76,9 +78,31 @@ class _WebShellPageState extends State<WebShellPage> {
             // 调试输出：adb logcat 可见
             // print('[WebView] ${message.message}');
           },
+
+          // 关键点：拦截 target=_blank / window.open
+          onCreateWindow: (controller, createWindowRequest) async {
+            final uri = createWindowRequest.request.url;
+            if (uri != null) {
+              // 在当前 WebView 直接加载新 URL，避免“打开新窗口失败然后回到主页”的现象
+              await controller.loadUrl(urlRequest: URLRequest(url: uri));
+            }
+            // 返回 true 表示我们己处理新窗口请求
+            return true;
+          },
+
           shouldOverrideUrlLoading: (controller, action) async {
-            // 按需拦截或放行
+            final uri = action.request.url;
+            // 这里可按需拦截外部 scheme（intent:, market: 等），当前统一放行 http/https/file
+            // 若要拦截外链到系统浏览器，可在此判断并返回 CANCEL
             return NavigationActionPolicy.ALLOW;
+          },
+
+          // 可选增强：记录错误，便于排查
+          onLoadError: (controller, url, code, message) async {
+            // print('onLoadError: $url [$code] $message');
+          },
+          onLoadHttpError: (controller, url, statusCode, description) async {
+            // print('onLoadHttpError: $url [$statusCode] $description');
           },
         ),
       ),
