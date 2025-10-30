@@ -49,8 +49,7 @@ class _WebShellPageState extends State<WebShellPage> {
               // 允许混合内容（根据页面需要）
               mixedContentMode:
                   AndroidMixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
-              // useShouldOverrideUrlLoading 在 5.8.0 中已移除/不再需要，删除即可
-              useOnDownloadStart: true,
+              // 注意：5.8.0 已移除了 useShouldOverrideUrlLoading 与 useOnDownloadStart
               useHybridComposition: true,
             ),
             ios: IOSInAppWebViewOptions(
