@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           flutter --version
 
-          # 推导 Flutter SDK 根目录（.../bin/flutter 的上一级）
+          # 通过 flutter 可执行推导 SDK 根目录（.../bin/flutter 的上一级）
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
 
@@ -52,8 +52,20 @@ jobs:
             echo "FLUTTER_HOME=${FLUTTER_SDK}"
           } >> "$GITHUB_ENV"
 
+          # 小工具：在 properties 文件中“设置/覆盖”键，确保唯一行并带换行
+          set_prop () {
+            local file="$1"; local key="$2"; local val="$3"
+            touch "$file"
+            # 删除已存在的 key 行
+            sed -i "/^${key}=.*/d" "$file"
+            # 确保文件最后一行有换行
+            tail -c1 "$file" | read -r _ || echo >> "$file"
+            # 追加一行 key=val
+            printf "%s=%s\n" "$key" "$val" >> "$file"
+          }
+
           # 1) 根 local.properties（include 脚本常读这里）
-          printf "flutter.sdk=%s\n" "${FLUTTER_SDK}" >> local.properties
+          set_prop local.properties "flutter.sdk" "${FLUTTER_SDK}"
           echo "==== root local.properties ===="
           cat local.properties || true
 
@@ -69,8 +81,9 @@ jobs:
           flutter pub get
           flutter build aar
 
-          # 4) module 的 .android/local.properties（Flutter 子工程直读）
-          printf "flutter.sdk=%s\n" "${FLUTTER_SDK}" >> .android/local.properties
+          # 4) module 的 .android/local.properties（子工程直读）
+          mkdir -p .android
+          set_prop .android/local.properties "flutter.sdk" "${FLUTTER_SDK}"
           echo "==== module .android/local.properties ===="
           cat .android/local.properties || true
 
