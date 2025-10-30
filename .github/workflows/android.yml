@@ -41,53 +41,48 @@ jobs:
           set -euo pipefail
           flutter --version
 
-          # 通过 flutter 可执行推导 SDK 根目录（.../bin/flutter 的上一级）
+          # 推导 Flutter SDK 根目录
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
-
-          # 导出环境变量（多重兜底）
           {
             echo "FLUTTER_SDK=${FLUTTER_SDK}"
             echo "FLUTTER_ROOT=${FLUTTER_SDK}"
             echo "FLUTTER_HOME=${FLUTTER_SDK}"
           } >> "$GITHUB_ENV"
 
-          # 小工具：在 properties 文件中“设置/覆盖”键，确保唯一行并带换行
+          # 工具函数：设置/覆盖 properties key
           set_prop () {
             local file="$1"; local key="$2"; local val="$3"
             touch "$file"
-            # 删除已存在的 key 行
             sed -i "/^${key}=.*/d" "$file"
-            # 确保文件最后一行有换行
             tail -c1 "$file" | read -r _ || echo >> "$file"
-            # 追加一行 key=val
             printf "%s=%s\n" "$key" "$val" >> "$file"
           }
 
-          # 1) 根 local.properties（include 脚本常读这里）
+          # 根 local.properties（供 include_flutter.groovy）
           set_prop local.properties "flutter.sdk" "${FLUTTER_SDK}"
           echo "==== root local.properties ===="
           cat local.properties || true
 
-          # 2) 初始化 module（保留 module 标记），仅恢复 lib/main.dart
+          # 初始化 module（保留 module 标记），仅恢复 lib/main.dart
           cd flutter_webshell
           flutter create --template=module --org com.szzdmj --project-name flutter_webshell --overwrite .
           cd ..
           git checkout -- flutter_webshell/lib/main.dart
 
-          # 3) 安装插件依赖 + 生成 .android
+          # 安装插件依赖 + 生成 .android
           cd flutter_webshell
           flutter pub add flutter_inappwebview:^5.8.0
           flutter pub get
           flutter build aar
 
-          # 4) module 的 .android/local.properties（子工程直读）
+          # module 的 .android/local.properties（子工程直读）
           mkdir -p .android
           set_prop .android/local.properties "flutter.sdk" "${FLUTTER_SDK}"
           echo "==== module .android/local.properties ===="
           cat .android/local.properties || true
 
-          # 5) 校验生成
+          # 校验生成
           ls -la .android
           head -n 120 .android/include_flutter.groovy || true
           cd ..
@@ -101,6 +96,22 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
+
+      - name: Ensure Android debug.keystore exists (CI signing fallback)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.android"
+          if [ ! -f "${HOME}/.android/debug.keystore" ]; then
+            echo "Generating ${HOME}/.android/debug.keystore ..."
+            keytool -genkey -noprompt \
+              -alias androiddebugkey \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keystore "${HOME}/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
+          ls -l "${HOME}/.android/debug.keystore" || exit 1
 
       - name: Print settings and sanity checks
         shell: bash
