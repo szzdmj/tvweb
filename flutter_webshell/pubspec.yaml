@@ -1,0 +1,15 @@
+name: flutter_webshell
+description: "Flutter module for embedding Web shell (InAppWebView) into native app."
+publish_to: "none"
+
+environment:
+  sdk: ">=2.17.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 按你的 Flutter/Android 工具链选择兼容版本
+  flutter_inappwebview: ^5.7.2+3
+
+flutter:
+  uses-material-design: true
