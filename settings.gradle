@@ -3,7 +3,40 @@ include ':app'
 
 // Flutter module 相对路径
 def flutterModulePath = new File(rootDir, "flutter_webshell")
+def includeScript = new File(flutterModulePath, ".android/include_flutter.groovy")
 
-// 注入 Flutter 子工程
-setBinding(new Binding([gradle: this, settings: settings]))
-evaluate(new File(flutterModulePath, ".android/include_flutter.groovy"))
+println "==[settings.gradle] flutterModulePath: ${flutterModulePath.absolutePath}"
+println "==[settings.gradle] include script: ${includeScript.absolutePath} exists=${includeScript.exists()}"
+
+// 打印 root local.properties 与 module .android/local.properties（便于定位 flutter.sdk）
+def rootLocal = new File(rootDir, "local.properties")
+println "==[settings.gradle] root local.properties exists=${rootLocal.exists()}"
+if (rootLocal.exists()) {
+  try {
+    println "---- root local.properties ----"
+    println rootLocal.getText("UTF-8")
+    println "--------------------------------"
+  } catch (Throwable t) {
+    println "!! failed to read root local.properties: ${t}"
+  }
+}
+def moduleAndroidLocal = new File(flutterModulePath, ".android/local.properties")
+println "==[settings.gradle] module .android/local.properties exists=${moduleAndroidLocal.exists()}"
+if (moduleAndroidLocal.exists()) {
+  try {
+    println "---- module .android/local.properties ----"
+    println moduleAndroidLocal.getText("UTF-8")
+    println "------------------------------------------"
+  } catch (Throwable t) {
+    println "!! failed to read module .android/local.properties: ${t}"
+  }
+}
+
+try {
+  setBinding(new Binding([gradle: this, settings: settings]))
+  evaluate(includeScript)
+} catch (Throwable t) {
+  println "==[settings.gradle] include_flutter.groovy evaluation failed =="
+  t.printStackTrace()
+  throw t
+}
