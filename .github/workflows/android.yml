@@ -1,5 +1,98 @@
-# 在现有 workflow 的 Build (assembleRelease) 步骤之后加入一个 Rename 步骤并调整 Upload 路径
-- name: Rename APK to szmjtvwebapp.apk
+name: Android CI - build release APK
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: 'Full URL of the homepage to fetch (default: https://szzdmj.github.io/index.html)'
+        required: false
+        default: 'https://szzdmj.github.io/index.html'
+      base_url:
+        description: 'Base URL to resolve relative assets (default: https://szzdmj.github.io/)'
+        required: false
+        default: 'https://szzdmj.github.io/'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Prepare assets — download only index.html, webjs.js, sw.js (latest)
+        env:
+          SOURCE_URL: ${{ github.event.inputs.source_url || 'https://szzdmj.github.io/index.html' }}
+          BASE_URL: ${{ github.event.inputs.base_url || 'https://szzdmj.github.io/' }}
+        run: |
+          set -euo pipefail
+          echo "SOURCE_URL=${SOURCE_URL}"
+          echo "BASE_URL=${BASE_URL}"
+          mkdir -p app/src/main/assets
+
+          # download index.html (latest) without modification
+          echo "Downloading index.html from ${SOURCE_URL}"
+          if ! curl -fsSL -o app/src/main/assets/index.html "${SOURCE_URL}"; then
+            echo "Failed to download ${SOURCE_URL}"
+            exit 1
+          fi
+
+          # remove BOM if present
+          sed -i '1s/^\xEF\xBB\xBF//' app/src/main/assets/index.html || true
+          echo "Downloaded index.html size: $(wc -c < app/src/main/assets/index.html) bytes"
+
+          # download webjs.js and sw.js from the same BASE_URL (latest) into assets
+          for f in webjs.js sw.js; do
+            url="${BASE_URL%/}/${f}"
+            dest="app/src/main/assets/${f}"
+            echo "Fetching ${url} -> ${dest}"
+            if curl -fsSL -o "${dest}" "${url}"; then
+              echo "Downloaded ${f} (size: $(wc -c < "${dest}") bytes)"
+            else
+              echo "Warning: failed to download ${url} — continuing (you may add this file manually)"
+            fi
+          done
+
+          echo "Files written to app/src/main/assets/:"
+          ls -l app/src/main/assets || true
+
+      - name: Build (assembleRelease)
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF8"
+      - name: Rename APK to szmjtvwebapp.apk
+        run: |
+    mkdir -p artifacts
+    # 找到生成的 APK（支持不同的输出名），并复制为所需名字
+    find app/build/outputs/apk/release -maxdepth 1 -type f -name "*.apk" -print -quit | while read -r src; do
+      echo "Renaming $src -> artifacts/szmjtvwebapp.apk"
+      cp "$src" artifacts/szmjtvwebapp.apk
+    done
+
+- name: Upload APK artifact (named szmjtvwebapp)
+  uses: actions/upload-artifact@v4
+  with:
+    name: szmjtvwebapp
+    path: artifacts/szmjtvwebapp.apk- name: Rename APK to szmjtvwebapp.apk
   run: |
     mkdir -p artifacts
     # 找到生成的 APK（支持不同的输出名），并复制为所需名字
@@ -13,3 +106,14 @@
   with:
     name: szmjtvwebapp
     path: artifacts/szmjtvwebapp.apk
+      - name: Show APK sizes
+        run: |
+          echo "APK artifacts:"
+          ls -lh app/build/outputs/apk/release || true
+          du -h app/build/outputs/apk/release/*.apk || true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvwebapp
+          path: app/build/outputs/apk/release/*.apk
