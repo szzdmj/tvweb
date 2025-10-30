@@ -41,30 +41,33 @@ jobs:
           set -euo pipefail
           flutter --version
 
-          # 通过已安装的 flutter 可执行反推出 SDK 根目录（.../bin/flutter 的上一级）
+          # 通过 flutter 可执行文件反推出 SDK 根目录（.../bin/flutter 的上一级）
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
 
-          # 1) 在项目根写入 local.properties（include_flutter.groovy 会读取这里的 flutter.sdk）
+          # 1) 写入根目录 local.properties（include_flutter.groovy 会读取这里）
           echo "flutter.sdk=${FLUTTER_SDK}" >> local.properties
           echo "Wrote flutter.sdk to $(pwd)/local.properties"
           tail -n +1 local.properties || true
 
-          # 2) 在 module 内：如不是 module，就就地初始化为 module；随后 pub get + build aar 生成 .android
+          # 2) 在 module 目录无条件初始化为 Flutter Module（避免状态不一致）
           cd flutter_webshell
-          if [ ! -f .metadata ] || ! grep -q 'project_type: module' .metadata; then
-            echo "flutter_webshell is not a Flutter module; initializing as module..."
-            flutter create -t module .
-          else
-            echo "Detected Flutter module."
-          fi
+          echo "Initializing flutter_webshell as Flutter module (force overwrite)..."
+          flutter create --template=module --org com.szzdmj --project-name flutter_webshell --overwrite .
+
+          # 模板可能覆盖了 lib/main.dart，立刻从当前仓库版本恢复
+          cd ..
+          git checkout -- flutter_webshell/lib/main.dart
+
+          # 回到 module，拉包并构建 AAR 以生成 .android/include_flutter.groovy
+          cd flutter_webshell
           flutter pub get
-          # 某些 Flutter 版本仅 pub get 不会生成 .android，执行 build aar 来生成
           flutter build aar
-          # 双保险：在 module 目录也写入 flutter.sdk
+
+          # 在 module 目录写一份 flutter.sdk（双保险）
           echo "flutter.sdk=${FLUTTER_SDK}" >> local.properties
 
-          # 3) 确认 .android 与 include_flutter.groovy
+          # 3) 确认生成成功
           ls -la .android || (echo ".android not generated" && exit 1)
           test -f .android/include_flutter.groovy || (echo "include_flutter.groovy missing" && exit 1)
           cd ..
