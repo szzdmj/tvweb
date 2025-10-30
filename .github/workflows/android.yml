@@ -44,33 +44,39 @@ jobs:
           # 推导 Flutter SDK 根目录（.../bin/flutter 的上一级）
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
-          echo "FLUTTER_SDK=${FLUTTER_SDK}" >> "$GITHUB_ENV"
 
-          # 根 local.properties（供 include_flutter.groovy 读取）
+          # 导出环境变量（多重兜底）
+          {
+            echo "FLUTTER_SDK=${FLUTTER_SDK}"
+            echo "FLUTTER_ROOT=${FLUTTER_SDK}"
+            echo "FLUTTER_HOME=${FLUTTER_SDK}"
+          } >> "$GITHUB_ENV"
+
+          # 1) 根 local.properties（include 脚本常读这里）
           printf "flutter.sdk=%s\n" "${FLUTTER_SDK}" >> local.properties
           echo "==== root local.properties ===="
           cat local.properties || true
 
-          # 初始化为 Flutter module（保留 module 标记），仅恢复 lib/main.dart
+          # 2) 初始化 module（保留 module 标记），仅恢复 lib/main.dart
           cd flutter_webshell
           flutter create --template=module --org com.szzdmj --project-name flutter_webshell --overwrite .
           cd ..
           git checkout -- flutter_webshell/lib/main.dart
 
-          # 添加依赖并生成 .android/include_flutter.groovy
+          # 3) 安装插件依赖 + 生成 .android
           cd flutter_webshell
           flutter pub add flutter_inappwebview:^5.8.0
           flutter pub get
           flutter build aar
 
-          # module 的 .android/local.properties（供子工程直接读取）
+          # 4) module 的 .android/local.properties（Flutter 子工程直读）
           printf "flutter.sdk=%s\n" "${FLUTTER_SDK}" >> .android/local.properties
           echo "==== module .android/local.properties ===="
           cat .android/local.properties || true
 
-          # 校验生成
+          # 5) 校验生成
           ls -la .android
-          head -n 80 .android/include_flutter.groovy || true
+          head -n 120 .android/include_flutter.groovy || true
           cd ..
 
       - name: Cache Gradle
@@ -93,7 +99,7 @@ jobs:
           cat local.properties || true
 
           echo "==== Gradle projects (expect :app and :flutter) ===="
-          ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" projects --no-daemon || true
+          ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" projects --stacktrace --info --no-daemon || true
 
       - name: Prepare assets — download only index.html, webjs.js, sw.js (latest)
         env:
@@ -120,11 +126,11 @@ jobs:
           JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF8"
 
       - name: Upload debug APK
+        if: always()
         run: |
           mkdir -p artifacts
           cp app/build/outputs/apk/debug/*.apk artifacts/debug.apk || true
           ls -lh artifacts || true
-        if: always()
 
       - name: Build Release (assembleRelease)
         run: ./gradlew -Pflutter.sdk="${FLUTTER_SDK}" assembleRelease --stacktrace --info --no-daemon
