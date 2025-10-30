@@ -32,18 +32,29 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 如需兼容 API19，请选择仍支持 19 的稳定版本
+          # 需要兼容 API19 的话，请选择仍支持 19 的稳定版本；先用这个验证
           flutter-version: '3.10.6'
           channel: 'stable'
 
-      - name: Prepare Flutter module (.android) and sdk path
+      - name: Prepare Flutter module (.android) and SDK path
+        shell: bash
         run: |
+          set -euo pipefail
           flutter --version
+
+          # 1) 在根目录写入 local.properties（include_flutter.groovy 会读取这里的 flutter.sdk）
+          echo "flutter.sdk=${FLUTTER_HOME}" >> local.properties
+          echo "Wrote flutter.sdk to $(pwd)/local.properties"
+          tail -n +1 local.properties || true
+
+          # 2) 在 module 内执行 pub get 以生成 .android/include_flutter.groovy
           cd flutter_webshell
           flutter pub get
+          # 可选：也在 module 目录写一份 local.properties（双保险）
+          echo "flutter.sdk=${FLUTTER_HOME}" >> local.properties
+          ls -la .android || (echo ".android not generated" && exit 1)
+          test -f .android/include_flutter.groovy || (echo "include_flutter.groovy missing" && exit 1)
           cd ..
-          echo "flutter.sdk=${FLUTTER_HOME}" >> gradle.properties
-          tail -n 5 gradle.properties
 
       - name: Cache Gradle
         uses: actions/cache@v4
