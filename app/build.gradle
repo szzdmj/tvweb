@@ -15,11 +15,32 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(System.getenv("KEYSTORE_FILE") ?: "release.keystore")
-            storePassword System.getenv("KEYSTORE_PASSWORD") ?: "password"
-            keyAlias System.getenv("KEY_ALIAS") ?: "alias"
-            keyPassword System.getenv("KEY_PASSWORD") ?: "password"
-            v1SigningEnabled true   // 必须：支持 4.4.4
+            // 优先读取 CI/本地注入的 keystore
+            def envKeystorePath = System.getenv("KEYSTORE_FILE")
+            def envKeystoreFile = envKeystorePath ? file(envKeystorePath) : null
+
+            // 兜底到系统 debug.keystore
+            def userHome = System.properties['user.home']
+            def debugKeystoreFile = file("${userHome}/.android/debug.keystore")
+
+            if (envKeystoreFile != null && envKeystoreFile.exists()) {
+                println "[signing] Using env KEYSTORE_FILE: ${envKeystoreFile}"
+                storeFile envKeystoreFile
+                storePassword System.getenv("KEYSTORE_PASSWORD") ?: "password"
+                keyAlias System.getenv("KEY_ALIAS") ?: "alias"
+                keyPassword System.getenv("KEY_PASSWORD") ?: "password"
+            } else if (debugKeystoreFile.exists()) {
+                println "[signing] Using fallback debug.keystore for release signing: ${debugKeystoreFile}"
+                storeFile debugKeystoreFile
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            } else {
+                throw new GradleException("No keystore found for release signing. Provide KEYSTORE_FILE or ensure ~/.android/debug.keystore exists.")
+            }
+
+            // 兼容 Android 4.4.4（需 v1 签名）
+            v1SigningEnabled true
             v2SigningEnabled true
         }
     }
@@ -45,4 +66,5 @@ android {
 dependencies {
     implementation project(':flutter') // Flutter 子工程
     implementation 'androidx.multidex:multidex:2.0.1'
+    // 其他依赖保持精简
 }
