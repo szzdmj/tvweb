@@ -45,19 +45,26 @@ jobs:
           FLUTTER_SDK="$(dirname "$(dirname "$(command -v flutter)")")"
           echo "Detected FLUTTER_SDK=${FLUTTER_SDK}"
 
-          # 1) 在项目根写入 local.properties（include_flutter.groovy 读取这里）
+          # 1) 在项目根写入 local.properties（include_flutter.groovy 会读取这里的 flutter.sdk）
           echo "flutter.sdk=${FLUTTER_SDK}" >> local.properties
           echo "Wrote flutter.sdk to $(pwd)/local.properties"
           tail -n +1 local.properties || true
 
-          # 2) 在 module 内执行 pub get + build aar，生成 .android/include_flutter.groovy
+          # 2) 在 module 内：如不是 module，就就地初始化为 module；随后 pub get + build aar 生成 .android
           cd flutter_webshell
+          if [ ! -f .metadata ] || ! grep -q 'project_type: module' .metadata; then
+            echo "flutter_webshell is not a Flutter module; initializing as module..."
+            flutter create -t module .
+          else
+            echo "Detected Flutter module."
+          fi
           flutter pub get
+          # 某些 Flutter 版本仅 pub get 不会生成 .android，执行 build aar 来生成
           flutter build aar
-          # 可选：也在 module 目录写一份 local.properties（双保险）
+          # 双保险：在 module 目录也写入 flutter.sdk
           echo "flutter.sdk=${FLUTTER_SDK}" >> local.properties
 
-          # 3) 确认 .android 生成成功
+          # 3) 确认 .android 与 include_flutter.groovy
           ls -la .android || (echo ".android not generated" && exit 1)
           test -f .android/include_flutter.groovy || (echo "include_flutter.groovy missing" && exit 1)
           cd ..
