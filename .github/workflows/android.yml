@@ -185,6 +185,7 @@ jobs:
         with:
           name: szmjtvwebapp
           path: artifacts/szmjtvwebapp.apk
+
       - name: Download latest szmjtvwebapp.apk from szzdmj/tvweb
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -205,3 +206,11 @@ jobs:
             "/repos/szzdmj/tvweb/actions/artifacts/${artifact_id}/zip" > /tmp/szmjtvwebapp.zip
           unzip -o /tmp/szmjtvwebapp.zip -d tvweb/external
           ls -l tvweb/external
+
+      # 新增：把解压得到的 APK 也作为当前运行的工件上传，运行结束后可从 Artifacts 下载
+      - name: Upload pulled szmjtvwebapp.apk as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvweb-external-szmjtvwebapp
+          path: tvweb/external/szmjtvwebapp.apk
+          if-no-files-found: error
