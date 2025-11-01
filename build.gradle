@@ -11,7 +11,8 @@ buildscript {
 
 allprojects {
     repositories {
-        google()
-        mavenCentral()
-    }
+  google()  // Must come first for Android deps
+  mavenCentral()
+  // jcenter() is deprecated; remove if present
+}
 }
