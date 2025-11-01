@@ -9,7 +9,7 @@ dependencies:
   flutter:
     sdk: flutter
   # 建议先用此版本验证；若与你本机/CI Flutter 版本不匹配，可再按需调整
-  flutter_inappwebview: ^5.7.2+3
+flutter_inappwebview: ^6.1.5  # Or latest from pub.dev
 
 flutter:
   uses-material-design: true
