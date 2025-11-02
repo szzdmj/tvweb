@@ -2,12 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>WebView 调试版 index.html（诊断 + 变量值/链接 + loadWeb 按钮）</title>
+  <title>WebView 调试版 index.html（诊断 + 变量值/链接 + loadWeb 按钮 + 屏幕显示变量值）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans CJK", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 8px; }
     h3 { margin: 6px 0; }
-    #log { border: 1px solid #ccc; padding: 8px; height: 42vh; overflow: auto; background:#f9f9f9; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+    #log { border: 1px solid #ccc; padding: 8px; height: 30vh; overflow: auto; background:#f9f9f9; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
     .INFO { color: #333; }
     .WARN { color: #b76e00; }
     .ERROR{ color: #b00020; }
@@ -18,6 +18,7 @@
     #top12 { margin-top:6px; padding:6px; background:#eef; border:1px solid #cde; }
     #linkArea { padding:6px; border:1px dashed #ddd; margin-top:6px; }
     .pill { display:inline-block; margin:2px 4px; padding:2px 6px; border-radius:10px; background:#eef; border:1px solid #cde; font-size:12px; }
+    #varDisplay { border:1px solid #ccc; padding:8px; margin-top:8px; background:#ffe; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
   </style>
 
   <!-- 轻量日志器 -->
@@ -88,6 +89,11 @@
     <button onclick="showVar()">显示变量值</button>
     <button onclick="makeLink()">生成链接（形如 变量/0）</button>
     <div id="linkArea"></div>
+  </div>
+
+  <div id="varDisplay">
+    <b>变量值显示区域：</b><br>
+    <div id="varContent">暂无变量值显示</div>
   </div>
 
   <div id="demoArea">
@@ -202,19 +208,29 @@
       addComposedLink('lateNode', 0);
     }
 
-    // 变量工具：显示变量值
+    // 变量工具：显示变量值（日志 + 屏幕显示）
     function showVar(){
       var name = (document.getElementById('varName').value || '').trim();
       if (!name) { L.warn('变量工具：请输入变量名'); return; }
       var v = window[name];
       if (!v) { L.warn('变量工具：window.'+name+' 不存在/未定义'); return; }
       L.info('window.'+name+' 类型：' + (typeof v));
+      var displayText = 'window.' + name + ' 类型：' + (typeof v) + '\n';
       if (typeof v === 'object') {
         L.info(name+' 值: ' + summarizeNode(v));
+        displayText += name + ' 值: ' + summarizeNode(v) + '\n';
       } else {
-        try { L.info(name+' 值（非节点）：' + String(v)); }
-        catch(e){ L.info(name+' 值（不可转字符串）'); }
+        try { 
+          L.info(name+' 值（非节点）：' + String(v)); 
+          displayText += name + ' 值（非节点）：' + String(v) + '\n';
+        }
+        catch(e){ 
+          L.info(name+' 值（不可转字符串）'); 
+          displayText += name + ' 值（不可转字符串）\n';
+        }
       }
+      // 更新屏幕显示区域
+      document.getElementById('varContent').textContent = displayText;
     }
 
     // 变量工具：生成链接 “变量/0”
