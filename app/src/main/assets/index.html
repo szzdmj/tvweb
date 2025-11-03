@@ -62,15 +62,13 @@
   }, true);
   </script>
 
-  <!-- 关键外挂：在加载 webjs.js 之前准备 polyfill + 模块导出捕获（支持 AMD/CommonJS/UMD） -->
+  <!-- 关键外挂（1/2）：模块导出捕获（AMD/CommonJS/UMD），在加载 webjs.js 之前注入 -->
   <script>
   (function(){
-    // 4.4 兼容：提供极简 globalThis
+    // globalThis 兼容
     if (typeof window.globalThis === 'undefined') {
       try {
-        Object.defineProperty(Object.prototype, '__gt__', {
-          get: function(){ return this; }, configurable: true
-        });
+        Object.defineProperty(Object.prototype, '__gt__', { get: function(){ return this; }, configurable: true });
         window.globalThis = __gt__;
         delete Object.prototype.__gt__;
       } catch(e) {
@@ -78,44 +76,103 @@
       }
     }
 
-    // 捕获 webjs 的导出（AMD/CommonJS/UMD 均可落到这些入口）
-    window.__webjsCapture = {
-      amdReturned: null,
-      commonReturned: null,
-      umdReturned: null
-    };
+    // 捕获 webjs 的导出
+    window.__webjsCapture = { amdReturned: null };
 
-    // 备份可能已存在的 define/module/exports
+    // 备份原对象
     var prevDefine = window.define;
     var prevModule = window.module;
     var prevExports = window.exports;
 
-    // 最小 AMD define：只接收 factory
-    window.define = function(factory){
+    // 简易 AMD
+    window.define = function(deps, factory){
+      if (typeof deps === 'function'){ factory = deps; }
       try {
-        // 部分库会调用 define([], factory)
-        if (typeof factory === 'function') {
-          window.__webjsCapture.amdReturned = factory();
-        } else if (factory && typeof factory === 'object') {
-          window.__webjsCapture.amdReturned = factory;
-        }
+        window.__webjsCapture.amdReturned = (typeof factory === 'function') ? factory() : factory;
       } catch(e){
         L.error('AMD define 执行失败：' + e);
       }
     };
     window.define.amd = true;
 
-    // 最小 CommonJS：module.exports/exports
+    // 简易 CommonJS
     window.module = { exports: {} };
     window.exports = window.module.exports;
 
-    // UMD 常见 fallback：如果库写到某个全局命名（例如 WebJS），我们后面会扫描 window 进行捕获
-
-    // 提供一个恢复函数，防止污染后续脚本
+    // 恢复函数
     window.__restoreModuleShims = function(){
-      try { window.define = prevDefine; } catch(e){}
-      try { window.module = prevModule; } catch(e){}
+      try { window.define  = prevDefine; }  catch(e){}
+      try { window.module  = prevModule; }  catch(e){}
       try { window.exports = prevExports; } catch(e){}
+    };
+  })();
+  </script>
+
+  <!-- 关键外挂（2/2）：最小“转译+装载”器（把不兼容 4.4 的语法粗略转为 ES5 并 eval） -->
+  <script>
+  (function(){
+    function replaceAll(s, re, rep){ return s.replace(re, rep); }
+
+    // 极简转译：仅覆盖常见 let/const、箭头函数、export
+    function transpileToES5(code){
+      try {
+        // 1) 去除 BOM
+        if (code.charCodeAt(0) === 0xFEFF) code = code.slice(1);
+
+        // 2) 移除常见的模块关键字（export default / export function）
+        code = replaceAll(code, /\bexport\s+default\s+/g, 'window.__webjsDefaultExport = ');
+        code = replaceAll(code, /\bexport\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g, 'function $1(');
+
+        // 3) let/const -> var（非常粗糙，但对大多数场景可用）
+        code = replaceAll(code, /\blet\s+/g, 'var ');
+        code = replaceAll(code, /\bconst\s+/g, 'var ');
+
+        // 4) 箭头函数（两类：() => { ... } 与 x => 表达式）
+        // 4.1 带块体
+        code = replaceAll(code, /(\([^\)]*\))\s*=>\s*\{/g, 'function $1 {');
+        code = replaceAll(code, /([A-Za-z_$][\w$]*)\s*=>\s*\{/g, 'function($1) {');
+        // 4.2 表达式体（保守：行尾或逗号/分号前的简单表达式）
+        code = replaceAll(code, /(\([^\)]*\))\s*=>\s*([^{}\n;]+)(?=[;\n,}])/g, 'function $1 { return $2 }');
+        code = replaceAll(code, /([A-Za-z_$][\w$]*)\s*=>\s*([^{}\n;]+)(?=[;\n,}])/g, 'function($1){ return $2 }');
+
+        return code;
+      } catch (e) {
+        L.error('转译失败：' + e);
+        return code;
+      }
+    }
+
+    function xhrLoadText(url, ok, fail){
+      try{
+        var x = new XMLHttpRequest();
+        if (x.overrideMimeType) x.overrideMimeType('text/plain; charset=utf-8');
+        x.onreadystatechange = function(){
+          if (x.readyState === 4){
+            if (x.status === 0 || (x.status >= 200 && x.status < 300)) ok(x.responseText);
+            else fail && fail('HTTP ' + x.status);
+          }
+        };
+        x.open('GET', url, true);
+        x.send(null);
+      }catch(e){ fail && fail('XHR 异常：' + e); }
+    }
+
+    window.__webjsCompatEval = function(url, done){
+      xhrLoadText(url, function(src){
+        var code = transpileToES5(String(src || ''));
+        try {
+          // 在全局作用域执行
+          (0, eval)(code + '\n//# sourceURL=' + url + '.compat.js');
+          L.info('webjs.js 兼容模式执行完成（已尝试 ES5 化）');
+          done && done(true);
+        } catch(e){
+          L.error('兼容模式 eval 失败：' + e);
+          done && done(false);
+        }
+      }, function(err){
+        L.error('兼容模式载入失败：' + err);
+        done && done(false);
+      });
     };
   })();
   </script>
@@ -261,7 +318,6 @@
         L.info('ID "'+id+'": window.'+id+' = ' + (byVar ? 'OK' : 'undefined')
                + ', getElementById = ' + (byGet ? 'OK' : 'null'));
       }
-      // 动态新增一个节点，验证 MutationObserver 是否把它挂到 window
       var late = document.createElement('div'); late.id = 'lateNode'; late.textContent = '动态新增: lateNode';
       document.body.appendChild(late);
       L.info('已新增 id="lateNode"。window.lateNode 类型：' + (typeof window.lateNode));
@@ -293,14 +349,12 @@
       document.getElementById('varContent').textContent = displayText;
     }
 
-    // 变量工具：生成链接 “变量/0”
     function makeLink(){
       var name = (document.getElementById('varName').value || '').trim();
       if (!name) { L.warn('变量工具：请输入变量名'); return; }
       addComposedLink(name, 0);
     }
 
-    // 在面板中添加由“名称/索引”组成的可点击链接（使用哈希，避免 file:// 真跳转）
     function addComposedLink(name, idx){
       var area = document.getElementById('linkArea');
       var a = document.createElement('a');
@@ -340,48 +394,43 @@
     }
 
     // ===== webjs 外挂适配核心 =====
-    // 从各种导出位置解析出 loadWeb 并挂到 window.loadWeb
     function resolveLoadWebFromExports(){
       try {
-        // 1) 直接全局
-        if (typeof window.loadWeb === 'function') {
-          L.info('发现全局 loadWeb');
-          return true;
-        }
-        // 2) CommonJS
+        if (typeof window.loadWeb === 'function') return true;
+
         var mexp = (window.module && window.module.exports) ? window.module.exports : null;
         if (mexp) {
-          if (typeof mexp.loadWeb === 'function'){ window.loadWeb = mexp.loadWeb; L.info('已从 module.exports.loadWeb 绑定到全局'); return true; }
-          if (mexp.default && typeof mexp.default.loadWeb === 'function'){ window.loadWeb = mexp.default.loadWeb; L.info('已从 module.exports.default.loadWeb 绑定到全局'); return true; }
-          if (typeof mexp === 'function'){ window.loadWeb = mexp; L.info('已从 module.exports（函数）绑定到全局'); return true; }
-        }
-        // 3) AMD 返回值
-        var amd = window.__webjsCapture && window.__webjsCapture.amdReturned;
-        if (amd) {
-          if (typeof amd.loadWeb === 'function'){ window.loadWeb = amd.loadWeb; L.info('已从 AMD 返回对象的 loadWeb 绑定到全局'); return true; }
-          if (amd.default && typeof amd.default.loadWeb === 'function'){ window.loadWeb = amd.default.loadWeb; L.info('已从 AMD 返回 default.loadWeb 绑定到全局'); return true; }
-          if (typeof amd === 'function'){ window.loadWeb = amd; L.info('已从 AMD 返回函数绑定到全局'); return true; }
-        }
-        // 4) UMD：扫描 window 顶层对象，寻找含有 loadWeb 的对象
-        var k, owner = null, lw = null, scanned = 0;
-        for (k in window) {
-          // 忽略标准属性，粗筛
-          if (!window.hasOwnProperty(k)) continue;
-          if (k === 'loadWeb' || k === 'module' || k === 'exports' || k === '__webjsCapture' || k === 'define') continue;
-          var v;
-          try { v = window[k]; } catch(e){ continue; }
-          scanned++;
-          if (v && typeof v === 'object') {
-            if (typeof v.loadWeb === 'function'){ owner = k; lw = v.loadWeb; break; }
-            if (v.default && typeof v.default.loadWeb === 'function'){ owner = k; lw = v.default.loadWeb; break; }
-          }
-        }
-        if (lw) {
-          window.loadWeb = lw;
-          L.info('已从全局对象 "'+owner+'" 绑定其 loadWeb 到 window.loadWeb（扫描 '+scanned+' 项）');
-          return true;
+          if (typeof mexp.loadWeb === 'function'){ window.loadWeb = mexp.loadWeb; return true; }
+          if (mexp && mexp.default && typeof mexp.default.loadWeb === 'function'){ window.loadWeb = mexp.default.loadWeb; return true; }
+          if (typeof mexp === 'function'){ window.loadWeb = mexp; return true; }
         }
 
+        var amd = window.__webjsCapture && window.__webjsCapture.amdReturned;
+        if (amd) {
+          if (typeof amd.loadWeb === 'function'){ window.loadWeb = amd.loadWeb; return true; }
+          if (amd.default && typeof amd.default.loadWeb === 'function'){ window.loadWeb = amd.default.loadWeb; return true; }
+          if (typeof amd === 'function'){ window.loadWeb = amd; return true; }
+        }
+
+        // 扫描 UMD 全局
+        var k, v, lw=null;
+        for (k in window) {
+          if (!window.hasOwnProperty(k)) continue;
+          if (k === 'loadWeb' || k === 'module' || k === 'exports' || k === '__webjsCapture' || k === 'define') continue;
+          try { v = window[k]; } catch(e){ continue; }
+          if (v && typeof v === 'object') {
+            if (typeof v.loadWeb === 'function'){ lw = v.loadWeb; break; }
+            if (v.default && typeof v.default.loadWeb === 'function'){ lw = v.default.loadWeb; break; }
+          }
+        }
+        if (lw){ window.loadWeb = lw; return true; }
+
+        // 默认导出含函数
+        if (window.__webjsDefaultExport) {
+          var d = window.__webjsDefaultExport;
+          if (typeof d.loadWeb === 'function'){ window.loadWeb = d.loadWeb; return true; }
+          if (typeof d === 'function'){ window.loadWeb = d; return true; }
+        }
         return false;
       } catch(e){
         L.error('解析 loadWeb 失败：' + e);
@@ -389,8 +438,8 @@
       }
     }
 
-    // 确保 webjs.js 已加载，然后回调（webjs 内已包含 jQuery）
-    var __webjsLoading = false, __webjsLoaded = false, __webjsWaiters = [];
+    var __webjsLoading = false, __webjsLoaded = false, __webjsWaiters = [], __compatTried = false;
+
     function ensureWebjsLoaded(cb){
       if (__webjsLoaded) { if (cb) try{ cb(); }catch(e){}; return; }
       __webjsWaiters.push(cb);
@@ -400,53 +449,63 @@
       var s = document.createElement('script');
       s.src = 'webjs.js';
       s.onload = function(){
-        __webjsLoaded = true;
-        L.info('webjs.js 加载成功');
+        L.info('webjs.js 加载成功（原始模式）');
 
-        // 恢复 define/module/exports，避免污染其它脚本
-        if (typeof window.__restoreModuleShims === 'function') {
-          window.__restoreModuleShims();
-        }
+        // 恢复 define/module/exports，避免影响其它脚本
+        if (typeof window.__restoreModuleShims === 'function') window.__restoreModuleShims();
 
-        // 解析并绑定 loadWeb
         var ok = resolveLoadWebFromExports();
-        L.info('window.loadWeb 类型： ' + (typeof window.loadWeb) + (ok ? '（已解析）' : '（未能解析）'));
+        L.info('window.loadWeb 类型：' + (typeof window.loadWeb) + (ok ? '（原始模式）' : '（未发现）'));
 
-        // 如果仍未拿到，短时轮询 1s 尝试晚绑定（应对 webjs 异步初始化）
-        if (!ok) {
-          var t0 = Date.now();
-          var timer = setInterval(function(){
-            var bound = resolveLoadWebFromExports() || (typeof window.loadWeb === 'function');
-            if (bound || (Date.now() - t0) > 1000) {
-              clearInterval(timer);
-              if (!bound) L.warn('轮询后仍未发现 loadWeb');
-            }
-          }, 50);
+        // 如果未能发现，尝试兼容转译模式（不改动 webjs.js 源文件）
+        if (!ok && !__compatTried) {
+          __compatTried = true;
+          L.warn('尝试以“兼容转译模式”加载 webjs.js（ES5 化）...');
+          window.__webjsCompatEval('webjs.js', function(success){
+            ok = resolveLoadWebFromExports();
+            L.info('兼容模式后 window.loadWeb 类型：' + (typeof window.loadWeb) + (ok ? '（已解析）' : '（仍未解析）'));
+            __webjsLoaded = true;
+            var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
+            for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){ L.error('webjs 回调异常：'+e); } }
+          });
+          return;
         }
 
+        __webjsLoaded = true;
         var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
         for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){ L.error('webjs 回调异常：'+e); } }
       };
       s.onerror = function(){
-        L.error('webjs.js NOT found 或加载失败（路径/文件缺失）。');
-        if (typeof window.__restoreModuleShims === 'function') {
-          window.__restoreModuleShims();
+        L.error('webjs.js 加载失败（原始模式）。');
+        if (typeof window.__restoreModuleShims === 'function') window.__restoreModuleShims();
+
+        // 直接进入兼容转译模式
+        if (!__compatTried) {
+          __compatTried = true;
+          L.warn('回退到“兼容转译模式”加载 webjs.js...');
+          window.__webjsCompatEval('webjs.js', function(success){
+            var ok = resolveLoadWebFromExports();
+            L.info('兼容模式后 window.loadWeb 类型：' + (typeof window.loadWeb) + (ok ? '（已解析）' : '（仍未解析）'));
+            __webjsLoaded = true;
+            var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
+            for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){} }
+          });
+        } else {
+          __webjsLoaded = true;
+          var list2 = __webjsWaiters.slice(); __webjsWaiters.length = 0;
+          for (var j=0;j<list2.length;j++) { try { list2[j] && list2[j](); } catch(e){} }
         }
-        var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
-        for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){} }
       };
       document.head.appendChild(s);
     }
 
-    // 手动加载 webjs.js（供按钮使用）
-    function tryLoadWebjs(){ ensureWebjsLoaded(function(){ L.info('tryLoadWebjs: 已加载'); }); }
+    function tryLoadWebjs(){ ensureWebjsLoaded(function(){ L.info('tryLoadWebjs: 已加载流程完成'); }); }
 
-    // 调用 loadWeb(site) 的按钮逻辑
     function callLoadWeb(){
       var site = (document.getElementById('siteUrl').value || '').trim();
       ensureWebjsLoaded(function(){
         if (typeof window.loadWeb !== 'function') {
-          L.warn('loadWeb 未定义，无法调用。请检查 webjs.js 是否导出该方法（已尝试外挂解析）。');
+          L.warn('loadWeb 未定义，无法调用（已尝试外挂解析与兼容转译）。');
           return;
         }
         try {
@@ -496,8 +555,7 @@
     }
 
     function FoundSite(site){
-      /* site 形如 http(s)://域名，尾部不带 / */
-      window.szsite = site;
+      window.szsite = site; // site 形如 http(s)://域名（无尾斜杠）
       L.info('FoundSite 被调用：' + site);
       showCallback('FoundSite', site);
     }
@@ -522,7 +580,7 @@
       }
     }
 
-    /* 获取到的新闻（需要 jQuery；若未加载则跳过） */
+    // 获取到的新闻（需要 jQuery；若未加载则跳过）
     function BeforeShowContent(html){
       if (!window.$) { L.warn('jQuery 未加载，BeforeShowContent 已跳过'); return; }
       var items = $(html.replace(/\n/g,'')), blockCount=0, news='', marquee='';
@@ -547,15 +605,18 @@
       if (typeof start_marquee === 'function') start_marquee(marquee);
     }
 
-    // 自动加载 webjs 并尝试调用 loadWeb（若 webjs 未提供该方法，仅记录日志）
-    ensureWebjsLoaded(function(){
-      if (typeof window.loadWeb === 'function') {
-        try { window.loadWeb(); }
-        catch(e){ L.error('自动调用 loadWeb 失败：' + e); }
-      } else {
-        L.warn('自动调用：loadWeb 未定义（已尝试外挂解析，请确认 webjs.js 导出方式/语法是否兼容 4.4）');
-      }
-    });
+    // 自动加载 webjs 并尝试调用 loadWeb（若未提供该方法，仅记录日志）
+    (function(){
+      tryLoadWebjs();
+      ensureWebjsLoaded(function(){
+        if (typeof window.loadWeb === 'function') {
+          try { window.loadWeb(); }
+          catch(e){ L.error('自动调用 loadWeb 失败：' + e); }
+        } else {
+          L.warn('自动调用：loadWeb 未定义（已尝试外挂解析与兼容转译）。');
+        }
+      });
+    })();
   </script>
 </body>
 </html>
