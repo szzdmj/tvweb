@@ -310,5 +310,70 @@
     runEnvChecks();
     runPreShimChecks();
   </script>
+
+  <!-- 新增的web代码部分 -->
+  <img src="" class="hidden" id="c" rel="" nov="1" pwa="0">
+  <script type="text/javascript">
+    // 显示本平台二维码和网址
+    try{
+      new QRCode(document.getElementById("qrcode"), {
+        text: location.href,
+        width: 140,
+        height: 140,
+        colorDark: "#000000",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.L
+      });
+    }catch{}
+
+    function FoundMedia(media){}
+
+    function FoundSite(site){
+      /* site形如 http://域名 或 https://域名，尾部不带/ */
+      window.szsite = site;
+    }
+
+    function NotFoundSite(){
+      $('#loading').text("未找到节点");
+      setTimeout(function(){
+        $('#loading').hide();
+      },3000);
+    }
+
+    function ShowLoading(show){
+      if (show && !window.szsite) $('#loading').text("正在下载播放列表，请稍候…"); else if(!show) $('#loading').hide();
+    }
+
+    /* 获取到的新闻 */
+    function BeforeShowContent(html){
+      var items = $(html.replace(/\n/g,'')), blockCount=0, news='', marquee='';
+      items.each(function(i,item){
+        var title = $(item).find('h4').find('span').text(), 
+          anchors = $('li', item);
+        if(!title || !anchors || anchors.length<4) {
+          return;
+        }
+        var half = Math.ceil(anchors.length / 2), anchors1 = '', anchors2 = '';
+        anchors.each(function(j,anchor){
+          if(j==0){
+            marquee+=anchor.innerHTML.replace(/<a\s/g, '<a style="margin-left:40px;" ');
+          }
+          var s = '<p>'+anchor.innerHTML+'</p>';
+          if(j<half) anchors1+=s; else anchors2+=s;
+        });
+        news += '<h3' + (i===0 ? '' : ' style="margin-top:30px;"') + '>'+title+'</h3>' +
+          '<div id="inMainleft' + (++blockCount) + '" class="newstd">' + anchors1 + '</div>' +
+          '<div id="inMainleft' + (++blockCount) + '" class="newstd">' + anchors2 + '</div>' +
+          '<div style="clear: both;"></div>';
+      });
+      $('#MainleftContent').html(news);
+      checkScreenWidth(blockCount);
+      // 走马灯
+      start_marquee(marquee);
+    }
+
+    /* 加载 */
+    loadWeb();
+  </script>
 </body>
 </html>
