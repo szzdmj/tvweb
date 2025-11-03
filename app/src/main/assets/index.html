@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>WebView/浏览器 运行环境诊断（含变量与回调值显示）</title>
+  <title>WebView/浏览器 运行环境诊断（含变量与回调值显示 + webjs 外挂适配 4.4.4）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans CJK", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 8px; }
@@ -24,7 +24,7 @@
     pre { white-space: pre-wrap; word-break: break-word; }
   </style>
 
-  <!-- 轻量日志器 -->
+  <!-- 轻量日志器（兼容 4.4：不使用 ES6 语法） -->
   <script>
   (function(){
     var start = Date.now();
@@ -48,7 +48,7 @@
   })();
   </script>
 
-  <!-- 捕获脚本错误与资源加载失败 -->
+  <!-- 捕获脚本错误与资源加载失败（兼容 4.4） -->
   <script>
   window.addEventListener('error', function(e){
     try{
@@ -60,6 +60,64 @@
       }
     }catch(e2) {}
   }, true);
+  </script>
+
+  <!-- 关键外挂：在加载 webjs.js 之前准备 polyfill + 模块导出捕获（支持 AMD/CommonJS/UMD） -->
+  <script>
+  (function(){
+    // 4.4 兼容：提供极简 globalThis
+    if (typeof window.globalThis === 'undefined') {
+      try {
+        Object.defineProperty(Object.prototype, '__gt__', {
+          get: function(){ return this; }, configurable: true
+        });
+        window.globalThis = __gt__;
+        delete Object.prototype.__gt__;
+      } catch(e) {
+        try { window.globalThis = (function(){ return this; })(); } catch(e2){}
+      }
+    }
+
+    // 捕获 webjs 的导出（AMD/CommonJS/UMD 均可落到这些入口）
+    window.__webjsCapture = {
+      amdReturned: null,
+      commonReturned: null,
+      umdReturned: null
+    };
+
+    // 备份可能已存在的 define/module/exports
+    var prevDefine = window.define;
+    var prevModule = window.module;
+    var prevExports = window.exports;
+
+    // 最小 AMD define：只接收 factory
+    window.define = function(factory){
+      try {
+        // 部分库会调用 define([], factory)
+        if (typeof factory === 'function') {
+          window.__webjsCapture.amdReturned = factory();
+        } else if (factory && typeof factory === 'object') {
+          window.__webjsCapture.amdReturned = factory;
+        }
+      } catch(e){
+        L.error('AMD define 执行失败：' + e);
+      }
+    };
+    window.define.amd = true;
+
+    // 最小 CommonJS：module.exports/exports
+    window.module = { exports: {} };
+    window.exports = window.module.exports;
+
+    // UMD 常见 fallback：如果库写到某个全局命名（例如 WebJS），我们后面会扫描 window 进行捕获
+
+    // 提供一个恢复函数，防止污染后续脚本
+    window.__restoreModuleShims = function(){
+      try { window.define = prevDefine; } catch(e){}
+      try { window.module = prevModule; } catch(e){}
+      try { window.exports = prevExports; } catch(e){}
+    };
+  })();
   </script>
 </head>
 <body>
@@ -281,6 +339,56 @@
       el.textContent = name + ' 参数：\n' + pretty(data);
     }
 
+    // ===== webjs 外挂适配核心 =====
+    // 从各种导出位置解析出 loadWeb 并挂到 window.loadWeb
+    function resolveLoadWebFromExports(){
+      try {
+        // 1) 直接全局
+        if (typeof window.loadWeb === 'function') {
+          L.info('发现全局 loadWeb');
+          return true;
+        }
+        // 2) CommonJS
+        var mexp = (window.module && window.module.exports) ? window.module.exports : null;
+        if (mexp) {
+          if (typeof mexp.loadWeb === 'function'){ window.loadWeb = mexp.loadWeb; L.info('已从 module.exports.loadWeb 绑定到全局'); return true; }
+          if (mexp.default && typeof mexp.default.loadWeb === 'function'){ window.loadWeb = mexp.default.loadWeb; L.info('已从 module.exports.default.loadWeb 绑定到全局'); return true; }
+          if (typeof mexp === 'function'){ window.loadWeb = mexp; L.info('已从 module.exports（函数）绑定到全局'); return true; }
+        }
+        // 3) AMD 返回值
+        var amd = window.__webjsCapture && window.__webjsCapture.amdReturned;
+        if (amd) {
+          if (typeof amd.loadWeb === 'function'){ window.loadWeb = amd.loadWeb; L.info('已从 AMD 返回对象的 loadWeb 绑定到全局'); return true; }
+          if (amd.default && typeof amd.default.loadWeb === 'function'){ window.loadWeb = amd.default.loadWeb; L.info('已从 AMD 返回 default.loadWeb 绑定到全局'); return true; }
+          if (typeof amd === 'function'){ window.loadWeb = amd; L.info('已从 AMD 返回函数绑定到全局'); return true; }
+        }
+        // 4) UMD：扫描 window 顶层对象，寻找含有 loadWeb 的对象
+        var k, owner = null, lw = null, scanned = 0;
+        for (k in window) {
+          // 忽略标准属性，粗筛
+          if (!window.hasOwnProperty(k)) continue;
+          if (k === 'loadWeb' || k === 'module' || k === 'exports' || k === '__webjsCapture' || k === 'define') continue;
+          var v;
+          try { v = window[k]; } catch(e){ continue; }
+          scanned++;
+          if (v && typeof v === 'object') {
+            if (typeof v.loadWeb === 'function'){ owner = k; lw = v.loadWeb; break; }
+            if (v.default && typeof v.default.loadWeb === 'function'){ owner = k; lw = v.default.loadWeb; break; }
+          }
+        }
+        if (lw) {
+          window.loadWeb = lw;
+          L.info('已从全局对象 "'+owner+'" 绑定其 loadWeb 到 window.loadWeb（扫描 '+scanned+' 项）');
+          return true;
+        }
+
+        return false;
+      } catch(e){
+        L.error('解析 loadWeb 失败：' + e);
+        return false;
+      }
+    }
+
     // 确保 webjs.js 已加载，然后回调（webjs 内已包含 jQuery）
     var __webjsLoading = false, __webjsLoaded = false, __webjsWaiters = [];
     function ensureWebjsLoaded(cb){
@@ -288,17 +396,42 @@
       __webjsWaiters.push(cb);
       if (__webjsLoading) return;
       __webjsLoading = true;
+
       var s = document.createElement('script');
       s.src = 'webjs.js';
       s.onload = function(){
         __webjsLoaded = true;
         L.info('webjs.js 加载成功');
-        L.info('window.loadWeb 类型： ' + (typeof window.loadWeb));
+
+        // 恢复 define/module/exports，避免污染其它脚本
+        if (typeof window.__restoreModuleShims === 'function') {
+          window.__restoreModuleShims();
+        }
+
+        // 解析并绑定 loadWeb
+        var ok = resolveLoadWebFromExports();
+        L.info('window.loadWeb 类型： ' + (typeof window.loadWeb) + (ok ? '（已解析）' : '（未能解析）'));
+
+        // 如果仍未拿到，短时轮询 1s 尝试晚绑定（应对 webjs 异步初始化）
+        if (!ok) {
+          var t0 = Date.now();
+          var timer = setInterval(function(){
+            var bound = resolveLoadWebFromExports() || (typeof window.loadWeb === 'function');
+            if (bound || (Date.now() - t0) > 1000) {
+              clearInterval(timer);
+              if (!bound) L.warn('轮询后仍未发现 loadWeb');
+            }
+          }, 50);
+        }
+
         var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
         for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){ L.error('webjs 回调异常：'+e); } }
       };
       s.onerror = function(){
         L.error('webjs.js NOT found 或加载失败（路径/文件缺失）。');
+        if (typeof window.__restoreModuleShims === 'function') {
+          window.__restoreModuleShims();
+        }
         var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
         for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){} }
       };
@@ -313,7 +446,7 @@
       var site = (document.getElementById('siteUrl').value || '').trim();
       ensureWebjsLoaded(function(){
         if (typeof window.loadWeb !== 'function') {
-          L.warn('loadWeb 未定义，无法调用。请检查 webjs.js 是否包含该方法。');
+          L.warn('loadWeb 未定义，无法调用。请检查 webjs.js 是否导出该方法（已尝试外挂解析）。');
           return;
         }
         try {
@@ -335,7 +468,7 @@
     runPreShimChecks();
   </script>
 
-  <!-- 业务相关：回调定义（已集成屏幕显示；兼容 Android 4.4，避免 ES6 语法） -->
+  <!-- 业务相关：回调定义（值将显示在屏幕 cbDisplay 面板；兼容 4.4） -->
   <img src="" class="hidden" id="c" rel="" nov="1" pwa="0">
   <script type="text/javascript">
     // 显示本平台二维码和网址（若未引入 QRCode 库则忽略）
@@ -356,11 +489,10 @@
     function setText(id, txt){ var el=document.getElementById(id); if(el){ el.textContent=txt; el.style.display=''; } }
     function hideEl(id){ var el=document.getElementById(id); if(el){ el.style.display='none'; } }
 
-    // 显示 FoundMedia/FoundSite 的入参
+    // 显示 FoundMedia/FoundSite 的入参（值见“回调值显示区域”）
     function FoundMedia(media){
       L.info('FoundMedia 被调用');
       showCallback('FoundMedia', media);
-      // 如需保留原逻辑，可在此追加
     }
 
     function FoundSite(site){
@@ -368,7 +500,6 @@
       window.szsite = site;
       L.info('FoundSite 被调用：' + site);
       showCallback('FoundSite', site);
-      // 如需保留原逻辑，可在此追加
     }
 
     function NotFoundSite(){
@@ -422,7 +553,7 @@
         try { window.loadWeb(); }
         catch(e){ L.error('自动调用 loadWeb 失败：' + e); }
       } else {
-        L.warn('自动调用：loadWeb 未定义（请确认 webjs.js 是否提供该方法）');
+        L.warn('自动调用：loadWeb 未定义（已尝试外挂解析，请确认 webjs.js 导出方式/语法是否兼容 4.4）');
       }
     });
   </script>
