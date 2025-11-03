@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>WebView 调试版 index.html（诊断 + 变量值/链接 + loadWeb 按钮 + 屏幕显示变量值）</title>
+  <title>WebView/浏览器 运行环境诊断（含变量与回调值显示）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans CJK", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 8px; }
@@ -18,9 +18,10 @@
     #top12 { margin-top:6px; padding:6px; background:#eef; border:1px solid #cde; }
     #linkArea { padding:6px; border:1px dashed #ddd; margin-top:6px; }
     .pill { display:inline-block; margin:2px 4px; padding:2px 6px; border-radius:10px; background:#eef; border:1px solid #cde; font-size:12px; }
-    #varDisplay { border:1px solid #ccc; padding:8px; margin-top:8px; background:#ffe; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+    #varDisplay, #cbDisplay { border:1px solid #ccc; padding:8px; margin-top:8px; background:#ffe; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
     #loading { margin-top:8px; padding:6px; border:1px dashed #ccc; background:#fffff0; display:none; }
     #qrcode { margin-top:8px; }
+    pre { white-space: pre-wrap; word-break: break-word; }
   </style>
 
   <!-- 轻量日志器 -->
@@ -57,7 +58,7 @@
         var where = (e.filename||'') + (e.lineno? (':'+e.lineno):'') + (e.colno? (':'+e.colno):'');
         L.error('Unhandled error: ' + (e.message||e) + (where? (' @ '+where):''));
       }
-    }catch(_) {}
+    }catch(e2) {}
   }, true);
   </script>
 </head>
@@ -94,8 +95,13 @@
   </div>
 
   <div id="varDisplay">
-    <b>变量值显示区域：</b><br>
-    <div id="varContent">暂无变量值显示</div>
+    <b>变量值显示区域：</b>
+    <pre id="varContent">暂无变量值显示</pre>
+  </div>
+
+  <div id="cbDisplay">
+    <b>回调值显示区域（FoundMedia/FoundSite）：</b>
+    <pre id="cbContent">暂无回调</pre>
   </div>
 
   <div id="demoArea">
@@ -124,19 +130,14 @@
     }
 
     function runEnvChecks(){
+      L.info('Feature serviceWorker: ' + (typeof navigator!=='undefined' && !!navigator.serviceWorker));
+      L.info('Feature fetch: ' + ('fetch' in window));
+      L.info('Feature Promise: ' + ('Promise' in window));
+      L.info('Feature MutationObserver: ' + ('MutationObserver' in window));
+      L.info('Feature CSS.supports: ' + ('CSS' in window && 'supports' in CSS));
       L.info('UserAgent: ' + navigator.userAgent);
       L.info('Location: '  + location.href);
       L.info('Protocol: '  + location.protocol + '（file:// 在 4.4 下不支持 SW）');
-      var feats = [
-        ['serviceWorker', (typeof navigator !== 'undefined' && 'serviceWorker' in navigator)],
-        ['fetch',         ('fetch'   in window)],
-        ['Promise',       ('Promise' in window)],
-        ['MutationObserver', ('MutationObserver' in window)],
-        ['CSS.supports',  ('CSS' in window && 'supports' in CSS)]
-      ];
-      for (var i=0;i<feats.length;i++){
-        L.info('Feature ' + feats[i][0] + ': ' + feats[i][1]);
-      }
     }
 
     function runPreShimChecks(){
@@ -174,7 +175,7 @@
                 }
               }
             }).observe(document.documentElement, {subtree:true, childList:true});
-          }catch(_) {}
+          }catch(e2) {}
           __shimInstalled = true;
           L.info('shim 安装完成。window.top12 类型：' + (typeof window.top12));
         } catch(e){
@@ -205,11 +206,8 @@
       // 动态新增一个节点，验证 MutationObserver 是否把它挂到 window
       var late = document.createElement('div'); late.id = 'lateNode'; late.textContent = '动态新增: lateNode';
       document.body.appendChild(late);
-      // 这里输出 lateNode 的“值摘要”
       L.info('已新增 id="lateNode"。window.lateNode 类型：' + (typeof window.lateNode));
       L.info('lateNode 值: ' + summarizeNode(window.lateNode));
-
-      // 同时生成并显示一个“组成的链接”示例：lateNode/0
       addComposedLink('lateNode', 0);
     }
 
@@ -234,7 +232,6 @@
           displayText += name + ' 值（不可转字符串）\n';
         }
       }
-      // 更新屏幕显示区域
       document.getElementById('varContent').textContent = displayText;
     }
 
@@ -262,10 +259,32 @@
       L.info('生成链接：' + linkText);
     }
 
-    // 确保 webjs.js 已加载，然后回调
+    // 安全 JSON 序列化（避免循环引用）
+    function pretty(obj){
+      var cache = [];
+      try{
+        var s = JSON.stringify(obj, function(key, value){
+          if (typeof value === 'object' && value !== null) {
+            if (cache.indexOf(value) !== -1) return '[Circular]';
+            cache.push(value);
+          }
+          return value;
+        }, 2);
+        cache = null;
+        return s;
+      }catch(e){
+        try{ return String(obj); }catch(e2){ return '[Unserializable]'; }
+      }
+    }
+    function showCallback(name, data){
+      var el = document.getElementById('cbContent');
+      el.textContent = name + ' 参数：\n' + pretty(data);
+    }
+
+    // 确保 webjs.js 已加载，然后回调（webjs 内已包含 jQuery）
     var __webjsLoading = false, __webjsLoaded = false, __webjsWaiters = [];
     function ensureWebjsLoaded(cb){
-      if (__webjsLoaded) return cb && cb();
+      if (__webjsLoaded) { if (cb) try{ cb(); }catch(e){}; return; }
       __webjsWaiters.push(cb);
       if (__webjsLoading) return;
       __webjsLoading = true;
@@ -274,14 +293,14 @@
       s.onload = function(){
         __webjsLoaded = true;
         L.info('webjs.js 加载成功');
-        L.info('window.loadWeb 类型：' + (typeof window.loadWeb));
+        L.info('window.loadWeb 类型： ' + (typeof window.loadWeb));
         var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
-        for (var i=0;i<list.length;i++) try { list[i] && list[i](); } catch(e){ L.error('webjs 回调异常：'+e); }
+        for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){ L.error('webjs 回调异常：'+e); } }
       };
       s.onerror = function(){
         L.error('webjs.js NOT found 或加载失败（路径/文件缺失）。');
         var list = __webjsWaiters.slice(); __webjsWaiters.length = 0;
-        for (var i=0;i<list.length;i++) try { list[i] && list[i](); } catch(e){}
+        for (var i=0;i<list.length;i++) { try { list[i] && list[i](); } catch(e){} }
       };
       document.head.appendChild(s);
     }
@@ -316,7 +335,7 @@
     runPreShimChecks();
   </script>
 
-  <!-- 新增的 web 代码（已整理与兼容 Android 4.4） -->
+  <!-- 业务相关：回调定义（已集成屏幕显示；兼容 Android 4.4，避免 ES6 语法） -->
   <img src="" class="hidden" id="c" rel="" nov="1" pwa="0">
   <script type="text/javascript">
     // 显示本平台二维码和网址（若未引入 QRCode 库则忽略）
@@ -333,15 +352,23 @@
       }
     }catch(e){}
 
-    // 简易 DOM 工具（避免依赖 jQuery）
+    // 如需 jQuery，这里依赖 webjs.js 内置版本
     function setText(id, txt){ var el=document.getElementById(id); if(el){ el.textContent=txt; el.style.display=''; } }
     function hideEl(id){ var el=document.getElementById(id); if(el){ el.style.display='none'; } }
 
-    function FoundMedia(media){}
+    // 显示 FoundMedia/FoundSite 的入参
+    function FoundMedia(media){
+      L.info('FoundMedia 被调用');
+      showCallback('FoundMedia', media);
+      // 如需保留原逻辑，可在此追加
+    }
 
     function FoundSite(site){
       /* site 形如 http(s)://域名，尾部不带 / */
       window.szsite = site;
+      L.info('FoundSite 被调用：' + site);
+      showCallback('FoundSite', site);
+      // 如需保留原逻辑，可在此追加
     }
 
     function NotFoundSite(){
@@ -389,7 +416,7 @@
       if (typeof start_marquee === 'function') start_marquee(marquee);
     }
 
-    // 自动加载 webjs 并尝试调用 loadWeb（避免在未加载时直接调用）
+    // 自动加载 webjs 并尝试调用 loadWeb（若 webjs 未提供该方法，仅记录日志）
     ensureWebjsLoaded(function(){
       if (typeof window.loadWeb === 'function') {
         try { window.loadWeb(); }
