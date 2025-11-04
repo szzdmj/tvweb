@@ -1,26 +1,127 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.szzdmj.tvweb">
+    xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.PICTURE_IN_PICTURE_SETTINGS" />
+        </intent>
+    </queries>
+
     <application
-        android:name=".TvwebApp"
-        android:label="SZZDMJ TV"
         android:allowBackup="false"
-        android:usesCleartextTraffic="true">
+        android:appCategory="video"
+        android:banner="@mipmap/banner"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:requestLegacyExternalStorage="true"
+        android:enableOnBackInvokedCallback="true"
+        android:localeConfig="@xml/locales_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Player"
+        tools:replace="android:allowBackup"
+        tools:targetApi="n">
+
+        <!-- 启动入口：保持与 6a7c139 一致，避免无 WebView 设备启动崩溃 -->
         <activity
-            android:name=".MainActivity"
-            android:label="SZZDMJ"
+            android:name=".PlayerActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|touchscreen"
             android:exported="true"
-            android:hardwareAccelerated="true"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
+            tools:targetApi="n">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="rtsp" />
+            </intent-filter>
+
+            <!-- 常见来源与媒体类型（精简，不影响播放能力） -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="video/*" />
+                <!-- 字幕 -->
+                <data android:mimeType="application/x-subrip" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/x-ssa" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/ass" />
+                <data android:mimeType="application/ssa" />
+                <data android:mimeType="text/vtt" />
+                <data android:mimeType="application/vtt" />
+                <data android:mimeType="application/ttml+xml" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- WebView 壳：仅在显式打开时使用，避免无 WebView 设备崩溃 -->
+        <activity
+            android:name=".WebShellActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Player"
+            tools:targetApi="n" />
+
+        <activity
+            android:name=".MediaStoreChooserActivity"
+            android:configChanges="orientation"
+            android:theme="@style/Transparent" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="@string/pref_title"
+            android:parentActivityName=".PlayerActivity"
+            android:screenOrientation="locked"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" >
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-    </application>
 
+    </application>
 </manifest>
